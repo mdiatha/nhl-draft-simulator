@@ -1,0 +1,36 @@
+version: "3.9"
+
+# Production compose — DB is managed by RDS, not Docker.
+# Runs only the FastAPI backend on EC2.
+#
+# Required environment variables (set in /home/ec2-user/.env):
+#   AWS_SECRETS_NAME  — Secrets Manager secret name (nhl-draft/production)
+#   AWS_S3_BUCKET     — S3 bucket for model artifacts
+#   AWS_REGION        — AWS region (e.g. us-east-1)
+#   APP_ENV           — set to "production"
+#
+# DATABASE_URL is loaded from Secrets Manager at startup by backend/app/aws/secrets.py.
+# API keys (Anthropic, Voyage, Secret Key, Admin Key) are loaded from SSM Parameter Store.
+
+services:
+  api:
+    image: ${ECR_REGISTRY}/nhl-draft-api:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    env_file:
+      - /home/ec2-user/.env
+    ports:
+      - "8000:8000"
+    # Single Uvicorn worker — t3.micro has 1 vCPU.
+    # Async I/O handles concurrent SSE streams (Claude agent, draft summaries)
+    # without blocking. No Redis pub/sub fan-out needed with a single process.
+    command: >
+      uvicorn app.main:app
+      --host 0.0.0.0
+      --port 8000
+      --timeout-keep-alive 120
+      --log-level info
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"

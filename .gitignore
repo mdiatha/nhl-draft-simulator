@@ -1,0 +1,64 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+.venv/
+venv/
+env/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# pytest / coverage
+.pytest_cache/
+*.coverage
+coverage.xml
+htmlcov/
+.cache/
+
+# mypy / ruff
+.mypy_cache/
+.ruff_cache/
+
+# Node / frontend
+node_modules/
+frontend/dist/
+
+# CDK
+infrastructure/cdk/cdk.out/
+infrastructure/cdk/*.js
+infrastructure/cdk/*.d.ts
+infrastructure/cdk/bin/*.js
+infrastructure/cdk/bin/*.d.ts
+infrastructure/cdk/lib/**/*.js
+infrastructure/cdk/lib/**/*.d.ts
+infrastructure/cdk/.lambda_build/
+
+# AWS CDK context (auto-generated, but commit cdk.json itself)
+# cdk.context.json can be committed to lock lookup values
+# infrastructure/cdk/cdk.context.json
+
+# Docker
+*.tar
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# macOS
+.DS_Store
+Thumbs.db
+
+# Lambda build artifacts
+lambda/**/*.zip

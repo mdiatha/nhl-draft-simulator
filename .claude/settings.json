@@ -1,0 +1,37 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(*)",
+      "Bash(pip3 --version)",
+      "Bash(npm --version)",
+      "Bash(brew list:*)",
+      "Bash(brew search:*)",
+      "Bash(brew info:*)",
+      "Bash(pg_isready)",
+      "Bash(redis-cli ping:*)",
+      "Read(//Users/mihirdiatha/Applications/**)",
+      "Bash(/opt/homebrew/bin/postgres --version)",
+      "Read(//opt/homebrew/var/**)",
+      "Bash(/opt/homebrew/bin/pg_ctl -D /opt/homebrew/var/postgresql@16 start)",
+      "Bash(/opt/homebrew/bin/initdb --locale=C -E UTF-8 /opt/homebrew/var/postgresql@16)",
+      "Bash(/opt/homebrew/bin/pg_ctl -D /opt/homebrew/var/postgresql@16 -l /tmp/postgres.log start)",
+      "Read(//private/tmp/**)",
+      "Bash(createuser -s nhl)",
+      "Bash(createdb -O nhl nhl_draft)",
+      "Bash(/opt/homebrew/bin/psql -U nhl -d nhl_draft -c \"SELECT 1\")",
+      "Bash(python3 -m venv .venv)",
+      "Bash(.venv/bin/pip install:*)",
+      "Bash(DATABASE_URL=\"postgresql+psycopg2://nhl:nhl_password@localhost:5432/nhl_draft\" .venv/bin/alembic upgrade head)",
+      "Bash(curl -s http://localhost:8000/health)",
+      "Bash(python3 -m json.tool)",
+      "Bash(curl -s -X POST http://localhost:8000/api/admin/ingest)",
+      "Bash(curl -sL -w \"\\\\n%{http_code}\" \"https://api-web.nhle.com/v1/standings/now\")",
+      "Bash(curl -sL \"https://api-web.nhle.com/v1/draft/picks?year=2024&round=1\" -w \"\\\\n%{http_code}\")",
+      "Read(//Users/mihirdiatha/NHL draft project/nhl-draft-simulator/frontend/**)",
+      "Read(//Users/mihirdiatha/NHL draft project/nhl-draft-simulator/frontend/https:/records.nhl.com/site/api/**)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(list\\(d.keys\\(\\)\\)\\)\")",
+      "Bash(curl -sL https://records.nhl.com/site/api/draft?cayenneExp=draftYear=2024%20and%20roundNumber=1)",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(d[''''total'''']\\); p=d[''''data''''][0]; print\\(list\\(p.keys\\(\\)\\)\\)\")"
+    ]
+  }
+}

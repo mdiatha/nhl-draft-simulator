@@ -1,0 +1,402 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ── Backend unit tests ────────────────────────────────────────────────────────
+  backend:
+    name: Backend (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint (ruff)
+        run: |
+          pip install ruff
+          ruff check app/ --ignore E501,F401
+
+      - name: Run unit tests with coverage
+        run: |
+          pytest tests/ -v --tb=short \
+            --ignore=tests/integration \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml \
+            --cov-fail-under=70
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: backend/coverage.xml
+
+  # ── Integration tests (testcontainers — requires Docker) ─────────────────────
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run integration tests
+        # TESTCONTAINERS_POSTGRES_IMAGE must be pgvector/pgvector:pg16 — NOT
+        # postgres:16-alpine — because migration 011 requires the pgvector extension.
+        env:
+          TESTCONTAINERS_POSTGRES_IMAGE: pgvector/pgvector:pg16
+        run: |
+          pytest tests/integration/ -v --tb=short \
+            --cov=app \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage_integration.xml
+
+      - name: Upload integration coverage
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-integration
+          path: backend/coverage_integration.xml
+
+  # ── Alembic migrations ────────────────────────────────────────────────────────
+  migrations:
+    name: Alembic migration check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        # Must use pgvector image — postgres:16-alpine lacks the pgvector extension
+        # required by migration 011 (vector(1024) column on scout_embeddings).
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: nhl
+          POSTGRES_PASSWORD: nhl_password
+          POSTGRES_DB: nhl_draft_ci
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nhl -d nhl_draft_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run migrations on blank database
+        env:
+          DATABASE_URL: postgresql+psycopg2://nhl:nhl_password@localhost:5432/nhl_draft_ci
+        run: alembic upgrade head
+
+  # ── CDK synth (no AWS credentials needed) ────────────────────────────────────
+  cdk-synth:
+    name: CDK synth
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infrastructure/cdk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: infrastructure/cdk/package-lock.json
+
+      - name: Install CDK dependencies
+        run: npm ci
+
+      - name: TypeScript type-check
+        run: npx tsc --noEmit
+
+      - name: CDK synth (no AWS credentials — validates CloudFormation output)
+        run: npx cdk synth --context environment=production 2>&1
+
+  # ── CDK diff (requires AWS credentials — PR + main push only) ────────────────
+  cdk-diff:
+    name: CDK diff
+    runs-on: ubuntu-latest
+    needs: [cdk-synth]
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      id-token: write
+      contents: read
+    defaults:
+      run:
+        working-directory: infrastructure/cdk
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: infrastructure/cdk/package-lock.json
+
+      - name: Install CDK dependencies
+        run: npm ci
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: CDK diff
+        run: |
+          npx cdk diff \
+            --context environment=production \
+            --context githubOrg="${{ github.repository_owner }}" \
+            --context githubRepo="${{ github.event.repository.name }}" \
+            --context alertEmail="${{ secrets.ALERT_EMAIL }}" \
+            2>&1 || true  # diff exits non-zero when changes exist — that's OK in CI
+
+  # ── Docker build + push ───────────────────────────────────────────────────────
+  # On PRs: build only (validates the Dockerfile).
+  # On main: build AND push to ECR so the deploy job can pull without rebuilding.
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build backend image
+        run: docker build -t nhl-draft-api:${{ github.sha }} ./backend
+
+      - name: Configure AWS credentials (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # OIDC — short-lived credentials, no long-lived AWS keys stored as secrets.
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Push image to ECR (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+        run: |
+          docker tag nhl-draft-api:${{ github.sha }} \
+            $ECR_REGISTRY/nhl-draft-api:${{ github.sha }}
+          docker tag nhl-draft-api:${{ github.sha }} \
+            $ECR_REGISTRY/nhl-draft-api:latest
+          docker push $ECR_REGISTRY/nhl-draft-api:${{ github.sha }}
+          docker push $ECR_REGISTRY/nhl-draft-api:latest
+
+  # ── Deploy to ECS (main branch only) ────────────────────────────────────────
+  deploy:
+    name: Deploy to ECS
+    runs-on: ubuntu-latest
+    needs: [backend, integration, migrations, docker, cdk-synth, cdk-diff]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production  # requires manual approval in GitHub Environments settings
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Run Alembic migration task
+        env:
+          ECS_CLUSTER: nhl-draft-production-cluster
+          ECS_MIGRATION_TASK: nhl-draft-production-api-migrate
+        run: |
+          read TASK_ARN FAILURE_REASON <<<"$(aws ecs run-task \
+            --cluster "$ECS_CLUSTER" \
+            --launch-type EC2 \
+            --task-definition "$ECS_MIGRATION_TASK" \
+            --count 1 \
+            --query "[tasks[0].taskArn,failures[0].reason]" \
+            --output text)"
+
+          if [ "$TASK_ARN" = "None" ] || [ -z "$TASK_ARN" ]; then
+            echo "Migration task failed to start: $FAILURE_REASON"
+            exit 1
+          fi
+
+          echo "Migration task: $TASK_ARN"
+          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
+
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "$ECS_CLUSTER" \
+            --tasks "$TASK_ARN" \
+            --query "tasks[0].containers[0].exitCode" \
+            --output text)
+
+          if [ "$EXIT_CODE" != "0" ]; then
+            echo "Migration task failed with exit code $EXIT_CODE"
+            aws ecs describe-tasks \
+              --cluster "$ECS_CLUSTER" \
+              --tasks "$TASK_ARN" \
+              --query "tasks[0].containers[0].reason" \
+              --output text
+            exit 1
+          fi
+
+      - name: Roll ECS service forward
+        env:
+          ECS_CLUSTER: nhl-draft-production-cluster
+          ECS_SERVICE: nhl-draft-production-api
+        run: |
+          aws ecs update-service \
+            --cluster "$ECS_CLUSTER" \
+            --service "$ECS_SERVICE" \
+            --force-new-deployment
+
+          aws ecs wait services-stable \
+            --cluster "$ECS_CLUSTER" \
+            --services "$ECS_SERVICE"
+
+      - name: Backend smoke tests
+        if: ${{ secrets.VITE_API_URL != '' }}
+        env:
+          API_BASE_URL: ${{ secrets.VITE_API_URL }}
+        run: |
+          curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/livez" > /dev/null
+          curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/readyz" > /dev/null
+          curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/api/ml/status" > /dev/null
+
+  # ── Deploy frontend to S3 + CloudFront invalidation ──────────────────────────
+  deploy-frontend:
+    name: Deploy frontend
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm install
+        working-directory: frontend
+
+      - name: Type check
+        run: npx tsc --noEmit
+        working-directory: frontend
+
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Sync to S3
+        run: |
+          # Hashed assets (JS/CSS) are immutable — cache aggressively
+          aws s3 sync frontend/dist/ s3://${{ secrets.FRONTEND_S3_BUCKET }}/ \
+            --delete \
+            --cache-control "public,max-age=31536000,immutable" \
+            --exclude "index.html"
+          # index.html must not be cached — it references hashed assets
+          aws s3 cp frontend/dist/index.html s3://${{ secrets.FRONTEND_S3_BUCKET }}/index.html \
+            --cache-control "no-cache,no-store,must-revalidate"
+
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ secrets.CLOUDFRONT_DISTRIBUTION_ID }} \
+            --paths "/*"
+
+      - name: Frontend smoke test
+        if: ${{ secrets.FRONTEND_URL != '' }}
+        env:
+          FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
+        run: |
+          curl -fsSL --retry 5 --retry-delay 5 "$FRONTEND_URL" | grep -qi "<!doctype html"
+
+  # ── Update Lambda function code (main branch only) ────────────────────────────
+  deploy-lambda:
+    name: Deploy ingestion Lambda
+    runs-on: ubuntu-latest
+    needs: [deploy]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    permissions:
+      id-token: write
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Package and update Lambda
+        run: |
+          cd lambda/ingestion
+          zip -j ingestion_trigger.zip handler.py
+          aws lambda update-function-code \
+            --function-name nhl-draft-production-ingestion-trigger \
+            --zip-file fileb://ingestion_trigger.zip

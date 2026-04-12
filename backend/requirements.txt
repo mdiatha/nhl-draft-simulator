@@ -54,7 +54,7 @@ pgvector==0.4.2                    # pgvector Python client for vector similarit
 sentry-sdk[fastapi]==2.19.2        # exception monitoring + performance tracing
 
 # ML explainability + drift detection
-shap==0.46.0                       # SHAP feature attributions for XGBoost
+shap==0.51.0                       # SHAP feature attributions for XGBoost
 
 # Observability: distributed tracing (OpenTelemetry)
 opentelemetry-sdk==1.29.0

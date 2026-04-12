@@ -37,6 +37,7 @@ export class IamConstruct extends Construct {
       ecrRepository,
       frontendBucket,
       cloudfrontDistribution,
+      ecsCluster,
       ecsTaskRole,
       ecsTaskExecutionRole,
       lambdaFunction,
@@ -103,16 +104,42 @@ export class IamConstruct extends Construct {
         ],
       }),
     );
+    const region = cdk.Stack.of(this).region;
+    const account = cdk.Stack.of(this).account;
+    const clusterName = ecsCluster.clusterName;
+
     this.githubActionsRole.addToPolicy(
       new iam.PolicyStatement({
-        sid: 'ECSDeploy',
-        actions: [
-          'ecs:DescribeServices',
-          'ecs:DescribeTasks',
-          'ecs:RunTask',
-          'ecs:UpdateService',
+        sid: 'ECSDescribe',
+        actions: ['ecs:DescribeServices', 'ecs:DescribeTasks'],
+        resources: [
+          `arn:aws:ecs:${region}:${account}:cluster/${clusterName}`,
+          `arn:aws:ecs:${region}:${account}:service/${clusterName}/*`,
+          `arn:aws:ecs:${region}:${account}:task/${clusterName}/*`,
         ],
-        resources: ['*'],
+      }),
+    );
+    this.githubActionsRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ECSRunTask',
+        actions: ['ecs:RunTask'],
+        resources: [
+          `arn:aws:ecs:${region}:${account}:task-definition/*`,
+        ],
+        conditions: {
+          ArnEquals: {
+            'ecs:cluster': `arn:aws:ecs:${region}:${account}:cluster/${clusterName}`,
+          },
+        },
+      }),
+    );
+    this.githubActionsRole.addToPolicy(
+      new iam.PolicyStatement({
+        sid: 'ECSUpdateService',
+        actions: ['ecs:UpdateService'],
+        resources: [
+          `arn:aws:ecs:${region}:${account}:service/${clusterName}/*`,
+        ],
       }),
     );
     this.githubActionsRole.addToPolicy(

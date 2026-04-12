@@ -51,9 +51,9 @@ export class IngestionConstruct extends Construct {
       timeout: cdk.Duration.seconds(60),
       environment: {
         API_BASE_URL: apiEndpoint,
-        // ADMIN_API_KEY is intentionally left blank here — set via SSM or
-        // override post-deploy. Lambda reads it from environment at runtime.
-        ADMIN_API_KEY: '',
+        // Value comes from CDK context (cdk.json or --context adminApiKey=...).
+        // Must be overridden post-deploy if left as placeholder.
+        ADMIN_API_KEY: this.node.tryGetContext('adminApiKey') ?? 'placeholder',
       },
       deadLetterQueue: dlq,
       logGroup,

@@ -20,7 +20,7 @@ export class NhlDraftStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: NhlDraftStackProps) {
     super(scope, id, props);
 
-    const ctx = this.node.tryGetContext;
+    const ctx = (key: string) => this.node.tryGetContext(key);
     const environment: string = ctx('environment') ?? 'production';
     const prefix = `nhl-draft-${environment}`;
 

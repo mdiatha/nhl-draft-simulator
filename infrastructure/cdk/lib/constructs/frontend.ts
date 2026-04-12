@@ -46,8 +46,8 @@ export class FrontendConstruct extends Construct {
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: 'NHL Draft Simulator — React SPA',
       defaultRootObject: 'index.html',
-      domainNames: aliases,
-      certificate: certificate,
+      domainNames: aliases.length > 0 ? aliases : undefined,
+      ...(certificate ? { certificate } : {}),
       defaultBehavior: {
         origin: cloudfront_origins.S3BucketOrigin.withOriginAccessControl(frontendBucket),
         allowedMethods: cloudfront.AllowedMethods.ALLOW_GET_HEAD,

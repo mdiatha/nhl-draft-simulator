@@ -8,7 +8,7 @@ alembic==1.13.3
 psycopg2-binary==2.9.10
 
 # Cache
-redis==5.2.0
+redis==7.4.0
 
 # Data / ML
 pandas==2.2.3

@@ -19,8 +19,8 @@
   "context": {
     "environment": "production",
     "alertEmail": "alerts@example.com",
-    "githubOrg": "",
-    "githubRepo": "",
+    "githubOrg": "mdiatha",
+    "githubRepo": "nhl-draft-simulator",
     "route53ZoneName": "",
     "frontendDomainName": "",
     "apiDomainName": "",

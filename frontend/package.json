@@ -17,7 +17,7 @@
     "zustand": "^4.5.2",
     "framer-motion": "^11.2.6",
     "recharts": "^2.12.5",
-    "axios": "^1.7.2",
+    "axios": "^1.15.0",
     "clsx": "^2.1.1"
   },
   "devDependencies": {

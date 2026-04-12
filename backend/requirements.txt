@@ -58,6 +58,6 @@ shap==0.46.0                       # SHAP feature attributions for XGBoost
 
 # Observability: distributed tracing (OpenTelemetry)
 opentelemetry-sdk==1.29.0
-opentelemetry-instrumentation-fastapi==0.50b0
+opentelemetry-instrumentation-fastapi==0.62b0
 opentelemetry-instrumentation-sqlalchemy==0.50b0
 opentelemetry-exporter-otlp-proto-grpc==1.29.0

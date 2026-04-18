@@ -44,12 +44,11 @@ class Settings(BaseSettings):
     # ── AI / LLM ──────────────────────────────────────────────────────────────
     # Anthropic Claude API key. Required for "Ask the Scout" agent and draft summaries.
     ANTHROPIC_API_KEY: str = ""
-    # Voyage AI API key. Required for RAG embeddings (voyage-3-lite).
-    # Voyage was acquired by Anthropic but uses a separate key — do not reuse ANTHROPIC_API_KEY.
-    # Obtain from https://dash.voyageai.com/api-keys
-    VOYAGE_API_KEY: str = ""
     # Claude model to use for chat/summaries.
     ANTHROPIC_MODEL: str = "claude-3-5-haiku-20241022"
+    # Ollama base URL for local embeddings (nomic-embed-text, 768-dim).
+    # Run: ollama pull nomic-embed-text  before starting the server.
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
     # MCP servers for the Scout agent — JSON array of server configs.
     # Each entry: {"type": "url", "url": "https://...", "name": "server-name"}
     # Leave empty to disable MCP (uses direct tool-use only).

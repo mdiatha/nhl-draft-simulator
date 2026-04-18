@@ -10,7 +10,8 @@ import pandas as pd
 
 from app.ml.registry import registry
 from app.ml.features import (
-    build_features, _gm_features, _contextual_feats, _css_norm,
+    build_features, _gm_features, _contextual_feats,
+    _css_list, _css_norm_within_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -135,10 +136,22 @@ def _score_pool_inner(
 
     # Quality map: prospect_id → css_rank_norm, used by _contextual_feats to
     # compute pos_quality_rank_norm (rank within same-position available players).
-    quality_map_inf: dict[int, float] = {
-        p.id: (_css_norm(p.css_ranking) if p.css_ranking else ppg_percentile.get(p.id, 0.5))
-        for p in prospects
-    }
+    # Use list-aware normalization: group by CSS list (na_skater/eur_skater/goalie),
+    # sort by raw css_ranking within each list, assign within-list ordinal rank.
+    # Prospects without css_ranking fall back to PPG percentile within their group.
+    quality_map_inf: dict[int, float] = {}
+    _css_groups: dict[str, list] = {}
+    for p in prospects:
+        if p.css_ranking:
+            lst = _css_list(p.position, p.nationality, p.draft_league)
+            _css_groups.setdefault(lst, []).append(p)
+        else:
+            quality_map_inf[p.id] = ppg_percentile.get(p.id, 0.5)
+    for lst, grp in _css_groups.items():
+        sorted_grp = sorted(grp, key=lambda p: p.css_ranking)
+        list_size = len(sorted_grp)
+        for within_rank, p in enumerate(sorted_grp, start=1):
+            quality_map_inf[p.id] = _css_norm_within_list(within_rank, list_size)
 
     # Build a fake team_pos_drafted defaultdict so _contextual_feats works
     # without needing a real team_id — team_positions IS the team's counter

@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 import { buildApiUrl, draftApi, lotteryApi } from '../lib/api'
 import { useDraftStore } from '../stores/draftStore'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
+import { DRAFT_YEAR } from '../lib/config'
 import type { DraftSimulationPick, LotteryPick } from '../types/index'
 import ShapDrawer from '../components/ui/ShapDrawer'
 
@@ -53,7 +54,7 @@ export default function DraftPage() {
           const { setLotteryResult } = useDraftStore.getState()
           setLotteryResult(data.pick_order ?? [], data.seed)
         })
-        .catch(console.error)
+        .catch((err: Error) => setError(err?.message ?? 'Failed to refresh lottery'))
     }
   }, [seedParam, orderParam, lotteryResult.length])
 
@@ -157,7 +158,7 @@ export default function DraftPage() {
     <main className="max-w-7xl mx-auto px-4 py-8">
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
-          <h1 className="text-3xl font-bold text-white">2025 Draft Board</h1>
+          <h1 className="text-3xl font-bold text-white">{DRAFT_YEAR} Draft Board</h1>
           {activeSeed && <p className="text-text-secondary text-sm mt-1">Seed: {activeSeed}</p>}
         </div>
         <div className="flex gap-2">

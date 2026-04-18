@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl } from '../lib/api'
 import { useDraftStore } from '../stores/draftStore'
+import { DRAFT_YEAR } from '../lib/config'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -185,7 +186,7 @@ export default function ScoutPage() {
               <span className="text-2xl text-accent-blue font-black">S</span>
             </div>
             <p className="text-text-secondary text-sm mb-6 max-w-xs">
-              Ask anything about the 2025 draft class, GM drafting patterns, or team positional needs.
+              Ask anything about the {DRAFT_YEAR} draft class, GM drafting patterns, or team positional needs.
             </p>
             <div className="flex flex-col gap-2 w-full max-w-sm">
               {SUGGESTED_QUESTIONS.map(q => (

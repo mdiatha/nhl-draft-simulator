@@ -109,12 +109,7 @@ export class ComputeConstruct extends Construct {
       }),
     );
 
-    const instanceProfile = new iam.CfnInstanceProfile(this, 'EcsInstanceProfile', {
-      instanceProfileName: `${prefix}-ecs-profile`,
-      roles: [instanceRole.roleName],
-    });
-
-    // ── Auto Scaling Group (t3.micro ECS instances) ────────────────────────────
+    // ── Auto Scaling Group (t3.small ECS instances) ───────────────────────────
     const ecsAmi = ec2.MachineImage.fromSsmParameter(
       '/aws/service/ecs/optimized-ami/amazon-linux-2/recommended/image_id',
     );
@@ -128,7 +123,7 @@ export class ComputeConstruct extends Construct {
       'ECS_ENABLE_TASK_IAM_ROLE=true',
       'ECS_ENABLE_TASK_IAM_ROLE_NETWORK_HOST=true',
       'ECSCFG',
-      // Small swap so single t3.micro is less brittle
+      // Swap gives headroom when both API + Ollama are loaded simultaneously
       'dd if=/dev/zero of=/swapfile bs=128M count=16',
       'chmod 600 /swapfile',
       'mkswap /swapfile',
@@ -140,8 +135,9 @@ export class ComputeConstruct extends Construct {
     const launchTemplate = new ec2.LaunchTemplate(this, 'EcsLaunchTemplate', {
       launchTemplateName: `${prefix}-ecs`,
       machineImage: ecsAmi,
-      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.MICRO),
+      instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
       securityGroup: ecsSecurityGroup,
+      role: instanceRole,
       userData,
       blockDevices: [
         {
@@ -153,12 +149,6 @@ export class ComputeConstruct extends Construct {
         },
       ],
     });
-    // Attach instance profile to launch template
-    const cfnLt = launchTemplate.node.defaultChild as ec2.CfnLaunchTemplate;
-    cfnLt.addPropertyOverride(
-      'LaunchTemplateData.IamInstanceProfile.Name',
-      instanceProfile.ref,
-    );
 
     const asg = new autoscaling.AutoScalingGroup(this, 'EcsAsg', {
       autoScalingGroupName: `${prefix}-ecs`,
@@ -266,7 +256,6 @@ export class ComputeConstruct extends Construct {
         actions: ['ssm:GetParameters', 'secretsmanager:GetSecretValue'],
         resources: [
           ssmParams.anthropicApiKey.parameterArn,
-          ssmParams.voyageApiKey.parameterArn,
           ssmParams.secretKey.parameterArn,
           ssmParams.adminApiKey.parameterArn,
           appSecret.secretArn,
@@ -305,11 +294,13 @@ export class ComputeConstruct extends Construct {
       AWS_REGION: cdk.Stack.of(this).region,
       AWS_SECRETS_NAME: appSecret.secretName,
       AWS_S3_BUCKET: modelsBucket.bucketName,
+      // Ollama runs as a sidecar in the same task - reachable via localhost on bridge network
+      OLLAMA_BASE_URL: 'http://localhost:11434',
+      ANTHROPIC_MODEL: 'claude-haiku-4-5-20251001',
     };
 
     const containerSecrets: { [key: string]: ecs.Secret } = {
       ANTHROPIC_API_KEY: ecs.Secret.fromSsmParameter(ssmParams.anthropicApiKey),
-      VOYAGE_API_KEY: ecs.Secret.fromSsmParameter(ssmParams.voyageApiKey),
       SECRET_KEY: ecs.Secret.fromSsmParameter(ssmParams.secretKey),
       ADMIN_API_KEY: ecs.Secret.fromSsmParameter(ssmParams.adminApiKey),
     };
@@ -322,10 +313,37 @@ export class ComputeConstruct extends Construct {
       taskRole: this.ecsTaskRole,
     });
 
+    // Ollama log group
+    const ollamaLogGroup = new logs.LogGroup(this, 'OllamaLogGroup', {
+      logGroupName: `/ecs/${prefix}-ollama`,
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    // Ollama sidecar - must start before the API container so embeddings are ready.
+    // nomic-embed-text (~270 MB) is pulled via the startup command from the EFS
+    // volume or re-pulled on cold start (~30s). memoryLimitMiB=700 is tight but
+    // sufficient for nomic-embed-text inference on t3.small (2 GB total).
+    const ollamaContainer = this.apiTaskDefinition.addContainer('ollama', {
+      image: ecs.ContainerImage.fromRegistry('ollama/ollama:latest'),
+      cpu: 256,
+      memoryLimitMiB: 700,
+      essential: false, // API degrades gracefully (no RAG) if Ollama fails
+      portMappings: [{ containerPort: 11434, hostPort: 11434, protocol: ecs.Protocol.TCP }],
+      logging: ecs.LogDrivers.awsLogs({
+        logGroup: ollamaLogGroup,
+        streamPrefix: 'ollama',
+      }),
+      // Pull nomic-embed-text on container start so the model is ready before the API
+      // starts serving embedding requests. This adds ~30s to cold starts but avoids
+      // a race condition where the API tries to embed before the model is available.
+      command: ['sh', '-c', 'ollama serve & sleep 5 && ollama pull nomic-embed-text && wait'],
+    });
+
     this.apiTaskDefinition.addContainer('api', {
       image: ecs.ContainerImage.fromEcrRepository(this.ecrRepository, 'latest'),
-      cpu: 256,
-      memoryLimitMiB: 768,
+      cpu: 512,
+      memoryLimitMiB: 900,
       essential: true,
       portMappings: [{ containerPort: 8000, hostPort: 8000, protocol: ecs.Protocol.TCP }],
       environment: containerEnvironment,

@@ -103,7 +103,7 @@ async def enqueue_index_rebuild(db: Session = Depends(get_db)):
         )
     except Exception as exc:
         logger.error("agent.index_failed", extra={"error": str(exc)})
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Index build failed due to an internal error. Check server logs.")
 
 
 @router.post(
@@ -119,7 +119,7 @@ async def build_index_sync(db: Session = Depends(get_db)):
         return IndexResponse(docs_indexed=count, message=f"Indexed {count} documents.")
     except Exception as exc:
         logger.error("agent.index_failed", extra={"error": str(exc)})
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Index build failed due to an internal error. Check server logs.")
 
 
 class HistoryItem(BaseModel):

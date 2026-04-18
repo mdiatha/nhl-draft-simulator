@@ -40,7 +40,7 @@ export class IngestionConstruct extends Construct {
     this.lambdaFunction = new lambda.Function(this, 'IngestionLambda', {
       functionName: `${prefix}-ingestion-trigger`,
       description:
-        'Daily NHL ingestion trigger — EventBridge fires this, calls FastAPI /api/admin/ingest via API Gateway',
+        'Daily NHL ingestion trigger - EventBridge fires this, calls FastAPI /api/admin/ingest via API Gateway',
       runtime: lambda.Runtime.PYTHON_3_11,
       handler: 'handler.handler',
       // Points to lambda/ingestion/ relative to the repo root
@@ -63,7 +63,7 @@ export class IngestionConstruct extends Construct {
     // DLQ send permission for Lambda's execution role
     dlq.grantSendMessages(this.lambdaFunction);
 
-    // EventBridge daily cron — 06:00 UTC
+    // EventBridge daily cron - 06:00 UTC
     const rule = new events.Rule(this, 'DailyIngestionRule', {
       ruleName: `${prefix}-daily-ingestion`,
       description: 'Triggers NHL data ingestion Lambda daily at 06:00 UTC',

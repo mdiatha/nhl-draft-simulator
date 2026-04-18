@@ -187,7 +187,7 @@ export class ObservabilityConstruct extends Construct {
 
     const lambdaErrorAlarm = new cloudwatch.Alarm(this, 'LambdaErrorAlarm', {
       alarmName: `${prefix}-lambda-ingestion-errors`,
-      alarmDescription: 'Ingestion Lambda returned an error — check CloudWatch logs',
+      alarmDescription: 'Ingestion Lambda returned an error - check CloudWatch logs',
       metric: new cloudwatch.Metric({
         namespace: 'AWS/Lambda',
         metricName: 'Errors',
@@ -206,7 +206,7 @@ export class ObservabilityConstruct extends Construct {
     // SLA monitor: alarms if ingestion hasn't run in 26 hours
     const lambdaSlaAlarm = new cloudwatch.Alarm(this, 'LambdaSlaAlarm', {
       alarmName: `${prefix}-lambda-ingestion-sla`,
-      alarmDescription: 'Ingestion Lambda has not run in 26 hours — check EventBridge rule',
+      alarmDescription: 'Ingestion Lambda has not run in 26 hours - check EventBridge rule',
       metric: new cloudwatch.Metric({
         namespace: 'AWS/Lambda',
         metricName: 'Invocations',
@@ -228,14 +228,14 @@ export class ObservabilityConstruct extends Construct {
       widgets: [
         [
           new cloudwatch.TextWidget({
-            markdown: `## NHL Draft Simulator — ${environment}`,
+            markdown: `## NHL Draft Simulator - ${environment}`,
             width: 24,
             height: 1,
           }),
         ],
         [
           new cloudwatch.GraphWidget({
-            title: 'ECS API — CPU & Memory',
+            title: 'ECS API - CPU & Memory',
             width: 8,
             height: 6,
             left: [
@@ -267,7 +267,7 @@ export class ObservabilityConstruct extends Construct {
             leftYAxis: { min: 0, max: 100 },
           }),
           new cloudwatch.GraphWidget({
-            title: 'RDS — CPU & Connections',
+            title: 'RDS - CPU & Connections',
             width: 8,
             height: 6,
             left: [
@@ -292,7 +292,7 @@ export class ObservabilityConstruct extends Construct {
             ],
           }),
           new cloudwatch.GraphWidget({
-            title: 'API Gateway — Requests, Errors, Latency',
+            title: 'API Gateway - Requests, Errors, Latency',
             width: 8,
             height: 6,
             left: [
@@ -328,7 +328,7 @@ export class ObservabilityConstruct extends Construct {
         ],
         [
           new cloudwatch.GraphWidget({
-            title: 'ALB — Healthy vs Unhealthy Hosts',
+            title: 'ALB - Healthy vs Unhealthy Hosts',
             width: 12,
             height: 6,
             left: [
@@ -358,7 +358,7 @@ export class ObservabilityConstruct extends Construct {
             ],
           }),
           new cloudwatch.GraphWidget({
-            title: 'Ingestion Lambda — Invocations & Errors',
+            title: 'Ingestion Lambda - Invocations & Errors',
             width: 12,
             height: 6,
             left: [

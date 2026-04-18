@@ -498,7 +498,8 @@ def _get_top_prospects(position: str, limit: int, db: Session) -> str:
 
 
 def _get_team_needs(team_name: str, db: Session) -> str:
-    from app.models import Team, GeneralManager, GMTendencyProfile
+    from app.models import Team, GeneralManager, GMTendencyProfile, Prospect2025
+    from collections import Counter
 
     team = _find_team(team_name, db)
     if not team:
@@ -519,20 +520,42 @@ def _get_team_needs(team_name: str, db: Session) -> str:
     )
 
     pos_weights = profile.position_weights if profile else {}
-    # Invert weights: lowest historical weight = highest need
-    if pos_weights:
-        sorted_needs = sorted(pos_weights.items(), key=lambda x: x[1])
-        needs = [{"position": p, "weight": round(w, 3), "need": "high" if i < 2 else "medium"}
-                 for i, (p, w) in enumerate(sorted_needs[:4])]
-    else:
-        needs = [{"position": p, "need": "unknown"} for p in ["C", "D", "LW", "RW"]]
+
+    # Draft class availability: what share of the 2026 class is each position?
+    all_prospects = db.query(Prospect2025.position).all()
+    total = len(all_prospects)
+    class_counts: Counter = Counter(p.position or "F" for p in all_prospects)
+    class_rates = {pos: count / total for pos, count in class_counts.items()} if total else {}
+
+    # Need = how much the GM wants this position vs. how available it is.
+    # A high GM weight against a thin position in the class = genuine need.
+    # A high GM weight against a deep position = just their style, not a need.
+    POSITIONS = ["C", "LW", "RW", "D", "G"]
+    needs = []
+    for pos in POSITIONS:
+        gm_rate  = pos_weights.get(pos, 0.0)
+        avail    = class_rates.get(pos, 0.0)
+        # Demand/supply ratio: >1 means GM wants more of this position than exists
+        ratio = gm_rate / avail if avail > 0 else (1.5 if gm_rate > 0 else 0.0)
+        needs.append({
+            "position":       pos,
+            "gm_draft_rate":  round(gm_rate, 3),
+            "class_share":    round(avail, 3),
+            "demand_supply":  round(ratio, 2),
+            "need":           "high" if ratio >= 1.3 else ("medium" if ratio >= 0.9 else "low"),
+        })
+
+    needs.sort(key=lambda x: -x["demand_supply"])
 
     return json.dumps({
-        "team": team.full_name,
-        "gm": gm.name if gm else None,
-        "archetype": profile.tendency_archetype if profile else None,
+        "team":             team.full_name,
+        "gm":               gm.name,
+        "archetype":        profile.tendency_archetype if profile else None,
         "positional_needs": needs,
-        "note": "Needs inferred from historical drafting underweights — lower historical weight = higher need.",
+        "note": (
+            "Need = GM's historical draft rate vs. position availability in the current class. "
+            "demand_supply > 1.3 = team historically drafts this position more than the class supplies it."
+        ),
     })
 
 
@@ -556,13 +579,7 @@ def _semantic_prospect_search(query: str, db: Session) -> str:
         logger.warning("semantic_search.embed_failed falling_back_to_keyword error=%s", exc)
         return _search_prospects(query, db)
 
-    doc_types = [
-        "prospect_profile",
-        "prospect_style",
-        "prospect_trend",
-        "prospect",
-        "prospect_with_stats",
-    ]
+    doc_types = ["prospect"]
 
     if query_vec:
         # Hybrid RRF: best of vector similarity + BM25 keyword
@@ -822,12 +839,7 @@ def _get_nhl_comp(prospect_name: str, db: Session) -> str:
     """
     from app.models import Prospect2025, ProspectStatHistory
     from app.agent import store
-    from app.agent.embeddings import (
-        embed_text,
-        prospect_profile_to_text,
-        prospect_style_to_text,
-        prospect_trend_to_text,
-    )
+    from app.agent.embeddings import embed_text, prospect_to_text
 
     prospect = (
         db.query(Prospect2025)
@@ -842,24 +854,16 @@ def _get_nhl_comp(prospect_name: str, db: Session) -> str:
         db.query(ProspectStatHistory)
         .filter(ProspectStatHistory.prospect_id == prospect.id)
         .order_by(ProspectStatHistory.fetched_at.desc())
-        .limit(3)
+        .limit(4)
         .all()
     )
 
-    prospect_desc = "\n\n".join(
-        [
-            prospect_profile_to_text(prospect),
-            prospect_style_to_text(prospect),
-            prospect_trend_to_text(prospect, stat_rows),
-        ]
-    )
-
-    query_vec = embed_text(prospect_desc)
+    query_vec = embed_text(prospect_to_text(prospect, stat_rows))
     if not query_vec:
         return json.dumps({
             "error": (
                 "Embedding service unavailable. "
-                "Ensure VOYAGE_API_KEY is set and run POST /api/agent/index."
+                "Ensure Ollama is running and run POST /api/agent/index."
             )
         })
 

@@ -30,7 +30,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 NHL_API_BASE = "https://api-web.nhle.com/v1"
-CURRENT_SEASON = "20242025"
+CURRENT_SEASON = "20252026"
 GAME_TYPE = 2  # regular season
 
 _POS_MAP = {"L": "LW", "R": "RW", "C": "C", "D": "D", "G": "G"}
@@ -156,7 +156,7 @@ def _player_to_text(p: dict) -> str:
     gp = p.get("gp", 0)
     if gp > 0:
         stat_line = (
-            f"2024-25: {gp} GP, {p.get('goals', 0)}G, "
+            f"2025-26: {gp} GP, {p.get('goals', 0)}G, "
             f"{p.get('assists', 0)}A, {p.get('points', 0)}P "
             f"({p.get('ppg', 0.0):.2f} PPG)"
         )

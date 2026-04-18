@@ -7,8 +7,8 @@ from __future__ import annotations
 
 # ── Season configuration ──────────────────────────────────────────────────────
 
-DRAFT_YEAR: int = 2025
-STANDINGS_DATE: str = "2025-04-15"  # Last day of the regular season
+DRAFT_YEAR: int = 2026
+STANDINGS_DATE: str = "2026-04-18"  # Last day of the 2025-26 regular season
 
 # ── Official NHL lottery odds (non-playoff finish order, fixed by NHL rules) ──
 # Keys are final standings positions 1–16; values are odds percentages.

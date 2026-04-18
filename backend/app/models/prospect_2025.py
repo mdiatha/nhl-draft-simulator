@@ -40,6 +40,10 @@ class Prospect2025(Base):
                                order_by="ProspectStatHistory.fetched_at.desc()",
                                lazy="dynamic")
 
+    stat_snapshots = relationship("ProspectStatSnapshot", back_populates="prospect",
+                                  order_by="ProspectStatSnapshot.snapshot_date.desc()",
+                                  lazy="dynamic")
+
     __table_args__ = (
         Index("ix_prospects_2025_css_ranking", "css_ranking"),
         Index("ix_prospects_2025_css_category", "css_category"),

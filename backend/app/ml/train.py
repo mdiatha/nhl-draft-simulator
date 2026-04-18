@@ -32,18 +32,17 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import roc_auc_score
 from xgboost import XGBRanker
 
 from app.ml.features import FEATURE_COLS, build_features, build_training_dataset
 
 logger = logging.getLogger(__name__)
 
-MODEL_PATH        = Path(__file__).parent / "model.pkl"
+from app.ml.registry import MODEL_PATH, MODEL_DIR  # single source of truth for model location
 TRAIN_HISTORY_PATH = Path(__file__).parent / "train_history.jsonl"   # one JSON record per line
 
-TRAIN_CUTOFF_YEAR    = 2019   # inclusive upper bound for training split
-VAL_START_YEAR       = 2020   # inclusive lower bound for validation split
+TRAIN_CUTOFF_YEAR    = 2020   # inclusive upper bound for training split
+VAL_START_YEAR       = 2021   # inclusive lower bound for validation split
 FINAL_N_ESTIMATORS   = 200    # reset after feature set change (33 features); update after eval run
 
 
@@ -96,25 +95,20 @@ def train(
         return split_df.groupby(["year", "overall_pick"], sort=False).size().values
 
     def _group_weights(split_df: pd.DataFrame) -> np.ndarray | None:
-        """Per-row sample weights expanded from per-group weights.
+        """Per-group sample weights for XGBRanker.
 
-        XGBRanker.fit() expects one weight per row, not per group. We derive
-        the group weight from the positive row (recency signal lives there), then
-        broadcast it to every row in that group so the tensor shapes match.
+        XGBoost ranking API expects one weight per query group (not per row).
+        We derive the group weight from the positive row's sample_weight
+        (recency + round signal lives there), one value per (year, overall_pick).
         """
         if "sample_weight" not in split_df.columns:
             return None
-        # Map each (year, overall_pick) group → weight from its positive row
         pos_rows = split_df[split_df[target_col] == 1].copy()
         group_w = (
             pos_rows.groupby(["year", "overall_pick"], sort=False)["sample_weight"]
             .first()
         )
-        # Merge back so every row inherits its group's weight
-        merged = split_df[["year", "overall_pick"]].merge(
-            group_w.rename("_gw"), on=["year", "overall_pick"], how="left"
-        )
-        return merged["_gw"].fillna(1.0).values
+        return group_w.fillna(1.0).values
 
     if final:
         logger.info("Production mode — training ranker on ALL %d rows", len(df))
@@ -158,7 +152,7 @@ def train(
 
     eval_model = XGBRanker(
         **{**rank_params, "n_estimators": 1500, "early_stopping_rounds": 50,
-           "eval_metric": "ndcg@1-"},
+           "eval_metric": "ndcg@1"},
     )
     eval_model.fit(
         X_train, y_train,

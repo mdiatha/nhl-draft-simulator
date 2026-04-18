@@ -18,7 +18,7 @@
   },
   "context": {
     "environment": "production",
-    "alertEmail": "alerts@example.com",
+    "alertEmail": "diatha.mihir@gmail.com",
     "githubOrg": "mdiatha",
     "githubRepo": "nhl-draft-simulator",
     "route53ZoneName": "",

@@ -1,7 +1,7 @@
 """Add prospect_stat_snapshots table for versioned pre-draft vs end-of-season stats.
 
 Revision ID: 014
-Revises: 013_missing_indexes
+Revises: 013
 Create Date: 2026-04-02
 
 Why this matters:
@@ -44,7 +44,7 @@ import sqlalchemy as sa
 
 
 revision = "014"
-down_revision = "013_missing_indexes"
+down_revision = "013"
 branch_labels = None
 depends_on = None
 

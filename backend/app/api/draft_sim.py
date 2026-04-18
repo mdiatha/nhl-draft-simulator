@@ -27,21 +27,44 @@ DEFAULT_TEMPERATURE = 0.15  # lower = more decisive; 1.0 = pure proportional sam
                              # realistic variation — at 0.4 with 224 prospects even
                              # CSS#188 had non-trivial selection probability
 
-# Dynamic temperature: early picks are nearly deterministic BPA, late picks have
-# more variance as teams factor in positional need and fit.
-# Exponential curve keeps picks 1-10 very tight, then ramps quickly after pick 15.
-# At pick 1:  T=0.15 * 0.10 = 0.015 (near-deterministic)
-# At pick 10: T=0.15 * 0.35 = 0.053
-# At pick 20: T=0.15 * 0.80 = 0.120
-# At pick 32: T=0.15 * 2.00 = 0.300
-def _pick_temperature(base_temperature: float, pick_num: int, total_picks: int = 32) -> float:
-    """Scale temperature exponentially by pick position.
 
-    Early picks (1-10): near-deterministic — teams take the best player available.
-    Late picks (20-32): meaningful variance — need, fit, and upside gambles.
+def _pick_temperature(
+    base_temperature: float,
+    pick_num: int,
+    available: list,
+    scores: dict[int, float],
+    total_picks: int = 32,
+) -> float:
+    """Compute pick temperature from the consensus gap between the top two available prospects.
+
+    Rationale: real draft unpredictability is driven by *how close* the top
+    prospects are, not by pick slot alone.  When there is a clear generational
+    talent (McDavid, Crosby) the #1 pick is near-deterministic regardless of
+    slot.  When picks 15-25 have 10 near-equal prospects, variance should spike.
+
+    Formula:
+        gap = score(rank_1) - score(rank_2)   # normalised to [0, 1]
+        T   = base_T * (1 - gap)^2            # tight gap → high T, clear gap → low T
+
+    If only one prospect is available the pick is deterministic (T → 0).
+    A small floor (0.01 × base_T) ensures softmax never fully collapses.
     """
-    t = (pick_num - 1) / max(total_picks - 1, 1)   # 0.0 at pick 1, 1.0 at last pick
-    scale = 0.10 * math.exp(math.log(20) * t)        # 0.10× → 2.0× exponential ramp
+    if len(available) <= 1:
+        return base_temperature * 0.01
+
+    # Sort by model score descending; use at most top-2
+    sorted_scores = sorted(
+        (scores.get(p.id, 0.0) for p in available), reverse=True
+    )
+    top1, top2 = sorted_scores[0], sorted_scores[1]
+
+    # Normalise gap to [0, 1] using a sigmoid-like bounded range.
+    # Scores are XGBoost ranking scores (not probabilities) — differences can
+    # be large, so we clamp before squaring to avoid an over-sharp distribution.
+    gap = max(0.0, min(top1 - top2, 1.0))
+
+    # Quadratic mapping: gap=0 → scale=1.0 (full base_T); gap=1 → scale=0.0
+    scale = max(0.01, (1.0 - gap) ** 2)
     return base_temperature * scale
 
 
@@ -181,7 +204,9 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
             from app.ml.calibration import apply_intervals
             cal_intervals = apply_intervals(scores, registry.calibration, alpha=0.10)
 
-        effective_temp = _pick_temperature(body.temperature, pick_num, len(body.lottery_result))
+        effective_temp = _pick_temperature(
+            body.temperature, pick_num, available, scores, len(body.lottery_result)
+        )
         chosen = _sample_pick(available, scores, rng, effective_temp)
 
         # Update draft state before moving to next pick

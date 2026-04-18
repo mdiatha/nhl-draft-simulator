@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, Fragment } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { motion, AnimatePresence } from 'framer-motion'
 import { draftApi } from '../lib/api'
+import { DRAFT_YEAR } from '../lib/config'
 import type { Prospect } from '../types'
 
 const POSITIONS = ['All', 'C', 'LW', 'RW', 'D', 'G'] as const
@@ -46,7 +47,7 @@ export default function ProspectsPage() {
 
   const debouncedSearch = useDebounce(search, 300)
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, error } = useQuery({
     queryKey: ['prospects', posFilter, natFilter, debouncedSearch],
     queryFn: () => draftApi.getProspects({
       ...(posFilter !== 'All' && { position: posFilter }),
@@ -100,12 +101,18 @@ export default function ProspectsPage() {
   return (
     <main className="max-w-7xl mx-auto px-4 py-8">
       <div className="mb-6">
-        <h1 className="text-3xl font-bold text-white mb-1">2025 Draft Class</h1>
+        <h1 className="text-3xl font-bold text-white mb-1">{DRAFT_YEAR} Draft Class</h1>
         <p className="text-text-secondary">
           {data?.total ?? '—'} prospects
           {sorted.length !== (data?.total ?? 0) && ` · ${sorted.length} shown`}
         </p>
       </div>
+
+      {error && (
+        <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
+          Failed to load prospects. Check your connection or try again.
+        </div>
+      )}
 
       {/* Filters */}
       <div className="flex flex-wrap gap-3 mb-5">

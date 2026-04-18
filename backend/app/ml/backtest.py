@@ -135,16 +135,21 @@ def run_backtest(db, test_year: int = TEST_YEAR, train_cutoff: int = TRAIN_CUTOF
         team_name = team.abbreviation if team else "UNK"
         archetype = profile.tendency_archetype if profile else "BPA"
 
-        # Available pool: players drafted AFTER this pick in the same year
-        pool = test_picks[i + 1:]
+        # Available pool: next NEGATIVE_WINDOW picks after this slot.
+        # Using a fixed window (not the full tail) prevents pool-size shrinkage
+        # from trivially inflating late-round accuracy: the last pick in round 4
+        # would have pool=1 with the tail, making it trivially 100% top-1.
+        # The fixed window matches the training distribution (NEGATIVE_WINDOW=31).
+        from app.ml.features import NEGATIVE_WINDOW
+        pool = test_picks[i + 1 : i + 1 + NEGATIVE_WINDOW]
         if not pool:
             pos_taken[pick.position or "F"] += 1
             team_pos_drafted[pick.team_id][pick.position or "F"] += 1
             continue
 
         candidates = [pick] + list(pool)
-        # remaining = board at this slot (current pick + everything after)
-        remaining  = candidates
+        # remaining = full board at this slot (everything after, not capped)
+        remaining  = test_picks[i:]
 
         # rank_gap_norm requires knowing the best CSS score in the candidate group
         group_css      = [quality.get(c.id, 0.5) for c in candidates]
@@ -201,7 +206,7 @@ def run_backtest(db, test_year: int = TEST_YEAR, train_cutoff: int = TRAIN_CUTOF
                 pick.id,
                 key_fn=lambda c: (
                     quality.get(c.id, 0.5),
-                    -(c.css_ranking or 10_000),
+                    -(c.css_rank or 10_000),
                     c.points_per_game or -1.0,
                 ),
             )
@@ -213,7 +218,7 @@ def run_backtest(db, test_year: int = TEST_YEAR, train_cutoff: int = TRAIN_CUTOF
                 key_fn=lambda c: (
                     c.points_per_game or -1.0,
                     quality.get(c.id, 0.5),
-                    -(c.css_ranking or 10_000),
+                    -(c.css_rank or 10_000),
                 ),
             )
         )

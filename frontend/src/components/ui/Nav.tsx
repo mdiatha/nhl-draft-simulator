@@ -3,10 +3,9 @@ import { clsx } from 'clsx'
 
 const links = [
   { to: '/lottery', label: 'Lottery', live: true },
+  { to: '/scenario', label: 'What-If' },
   { to: '/prospects', label: 'Prospects' },
-  { to: '/model', label: 'Model' },
   { to: '/scout', label: 'Ask the Scout' },
-  { to: '/admin', label: 'Admin' },
 ]
 
 export default function Nav() {

@@ -7,6 +7,7 @@ import LotteryDraw from '../components/lottery/LotteryDraw'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
 import { useLotteryStore } from '../stores/lotteryStore'
 import { useDraftStore } from '../stores/draftStore'
+import { DRAFT_YEAR } from '../lib/config'
 import type { LotteryPick, LotterySimulationTeam } from '../types'
 
 interface LiveTeam {
@@ -117,7 +118,7 @@ export default function LotteryPage() {
         <div>
           <h1 className="text-3xl font-bold text-white">Draft Lottery</h1>
           <p className="text-text-secondary mt-1 text-sm">
-            2025 · {nonPlayoff.length} lottery-eligible teams · {lotteryDraws} draws · odds based on live standings
+            {DRAFT_YEAR} · {nonPlayoff.length} lottery-eligible teams · {lotteryDraws} draws · odds based on live standings
             {lastUpdated && <span className="ml-2 text-text-muted">· updated {lastUpdated}</span>}
           </p>
         </div>

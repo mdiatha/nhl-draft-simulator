@@ -9,7 +9,6 @@ export interface SecretsConstructProps {
 
 export interface SsmParams {
   anthropicApiKey: ssm.StringParameter;
-  voyageApiKey: ssm.StringParameter;
   secretKey: ssm.StringParameter;
   adminApiKey: ssm.StringParameter;
 }
@@ -18,7 +17,7 @@ export interface SsmParams {
  * Secrets Manager holds the DATABASE_URL (generated at deploy time by the Compute construct
  * and written as a post-deploy step or via CDK custom resource).
  *
- * SSM SecureString parameters hold static API keys — free and KMS-encrypted,
+ * SSM SecureString parameters hold static API keys - free and KMS-encrypted,
  * unlike Secrets Manager which costs $0.40/secret/month.
  *
  * Actual secret values must be set externally (e.g. `aws ssm put-parameter`
@@ -32,10 +31,10 @@ export class SecretsConstruct extends Construct {
     super(scope, id);
     const { prefix } = props;
 
-    // Secrets Manager — DATABASE_URL (populated after RDS is created)
+    // Secrets Manager - DATABASE_URL (populated after RDS is created)
     this.appSecret = new secretsmanager.Secret(this, 'AppSecret', {
       secretName: 'nhl-draft/production',
-      description: 'NHL Draft Simulator — DATABASE_URL (loaded by FastAPI at startup)',
+      description: 'NHL Draft Simulator - DATABASE_URL (loaded by FastAPI at startup)',
       // Initial placeholder; real value set once RDS endpoint is known
       generateSecretString: {
         secretStringTemplate: JSON.stringify({ DATABASE_URL: 'postgresql+psycopg2://placeholder' }),
@@ -45,7 +44,7 @@ export class SecretsConstruct extends Construct {
     });
     cdk.Tags.of(this.appSecret).add('Name', `${prefix}-app-secret`);
 
-    // SSM SecureString parameters — static API keys
+    // SSM SecureString parameters - static API keys
     // Values must be provided via CDK context or set manually after first deploy.
     const makeParam = (
       logicalId: string,
@@ -68,12 +67,6 @@ export class SecretsConstruct extends Construct {
         '/nhl-draft/anthropic_api_key',
         'Anthropic API key for Claude scout agent',
         'anthropicApiKey',
-      ),
-      voyageApiKey: makeParam(
-        'VoyageApiKey',
-        '/nhl-draft/voyage_api_key',
-        'Voyage AI API key for RAG embeddings',
-        'voyageApiKey',
       ),
       secretKey: makeParam(
         'SecretKey',

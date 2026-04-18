@@ -21,7 +21,7 @@ export interface IamConstructProps {
 }
 
 /**
- * GitHub Actions OIDC federation — short-lived credentials, no stored AWS keys.
+ * GitHub Actions OIDC federation - short-lived credentials, no stored AWS keys.
  * The role grants exactly what CI/CD needs: ECR push, ECS deploy, S3 frontend
  * sync, CloudFront invalidation, and Lambda code update.
  */
@@ -156,7 +156,7 @@ export class IamConstruct extends Construct {
         resources: [ecsTaskRole.roleArn, ecsTaskExecutionRole.roleArn],
       }),
     );
-    // CDK deploy permissions — allows GitHub Actions to call cdk deploy
+    // CDK deploy permissions - allows GitHub Actions to call cdk deploy
     this.githubActionsRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'CdkDeploy',

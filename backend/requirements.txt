@@ -48,7 +48,10 @@ slowapi==0.1.9                     # rate limiting (Starlette/FastAPI)
 
 # AI / LLM
 anthropic==0.86.0                  # Claude API (RAG agent + draft summaries)
+mcp==1.6.0                         # MCP client SDK — required when MCP_SERVERS is configured
 pgvector==0.4.2                    # pgvector Python client for vector similarity search
+# Embeddings are served locally via Ollama (nomic-embed-text, 768-dim).
+# No additional Python package needed — uses httpx (already listed above).
 
 # Error tracking
 sentry-sdk[fastapi]==2.19.2        # exception monitoring + performance tracing

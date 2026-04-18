@@ -32,6 +32,12 @@ logger = logging.getLogger(__name__)
 
 CACHE_TTL_HOURS = 25   # rows older than this are treated as stale
 
+# Bump this string whenever FEATURE_COLS changes (columns added, removed, or renamed).
+# Cached rows written with a different version are treated as a full cache miss,
+# preventing silent corruption when features change between deployments.
+# Format: "v{N}" where N increments on each breaking feature set change.
+FEATURE_SCHEMA_VERSION = "v2"   # v2: 33-feature set with rank_gap_norm + nat groups
+
 
 # ── Write path ─────────────────────────────────────────────────────────────────
 
@@ -48,7 +54,7 @@ def refresh_feature_store(db: Session) -> int:
     from app.models import Prospect2025
     from app.models.prospect_features import ProspectFeatures
     from app.ml.predict import compute_pool_stats
-    from app.ml.features import build_features, _gm_features, _contextual_feats, _css_norm, FEATURE_COLS
+    from app.ml.features import build_features, _gm_features, _contextual_feats, _css_list, _css_norm_within_list, FEATURE_COLS
     from collections import Counter, defaultdict
 
     prospects = db.query(Prospect2025).order_by(Prospect2025.css_ranking.nullslast()).all()
@@ -68,10 +74,20 @@ def refresh_feature_store(db: Session) -> int:
 
     # Quality map for pos_quality_rank_norm — computed from the full pool
     # (neutral context: no picks made yet, full 2025 class available).
-    quality_map_fs: dict[int, float] = {
-        p.id: (_css_norm(p.css_ranking) if p.css_ranking else ppg_percentile.get(p.id, 0.5))
-        for p in prospects
-    }
+    # List-aware: normalize within na_skater / eur_skater / goalie separately.
+    quality_map_fs: dict[int, float] = {}
+    _fs_css_groups: dict[str, list] = {}
+    for p in prospects:
+        if p.css_ranking:
+            lst = _css_list(p.position, p.nationality, p.draft_league)
+            _fs_css_groups.setdefault(lst, []).append(p)
+        else:
+            quality_map_fs[p.id] = ppg_percentile.get(p.id, 0.5)
+    for lst, grp in _fs_css_groups.items():
+        sorted_grp = sorted(grp, key=lambda p: p.css_ranking)
+        list_size = len(sorted_grp)
+        for within_rank, p in enumerate(sorted_grp, start=1):
+            quality_map_fs[p.id] = _css_norm_within_list(within_rank, list_size)
 
     now = datetime.now(timezone.utc)
     rows_processed = 0
@@ -114,6 +130,10 @@ def refresh_feature_store(db: Session) -> int:
 
         # Convert numpy types to native Python for JSON serialization
         feat_json = {k: float(v) if hasattr(v, "item") else v for k, v in feat_dict.items()}
+
+        # Tag each cached row with the feature schema version so get_cached_features()
+        # can detect stale caches after a feature set change without a migration.
+        feat_json["__schema_version__"] = FEATURE_SCHEMA_VERSION
 
         # Upsert into prospect_features
         existing = (
@@ -181,6 +201,17 @@ def get_cached_features(
             len(prospect_ids), len(rows),
         )
         return None
+
+    # Validate schema version — reject the whole batch if any row was written
+    # with a different feature schema (catches deploys that changed FEATURE_COLS).
+    for row in rows:
+        cached_ver = (row.features_json or {}).get("__schema_version__")
+        if cached_ver != FEATURE_SCHEMA_VERSION:
+            logger.info(
+                "feature_store.schema_version_mismatch cached=%s current=%s — forcing full rebuild",
+                cached_ver, FEATURE_SCHEMA_VERSION,
+            )
+            return None
 
     # Reconstruct DataFrame in the same order as prospect_ids
     id_to_row = {r.prospect_id: r.features_json for r in rows}

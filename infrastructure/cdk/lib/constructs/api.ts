@@ -18,7 +18,7 @@ export interface ApiConstructProps {
 
 /**
  * HTTP API Gateway (v2) with a VPC Link pointing at the internal ALB.
- * All traffic is proxied via a single $default route — no auth at the
+ * All traffic is proxied via a single $default route - no auth at the
  * gateway layer; the FastAPI middleware handles admin key validation.
  */
 export class ApiConstruct extends Construct {

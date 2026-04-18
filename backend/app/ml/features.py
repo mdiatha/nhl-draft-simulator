@@ -414,36 +414,74 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── Training dataset builder ───────────────────────────────────────────────────
 
-# Fixed denominator for css_rank_norm so training and inference are on the same scale.
-# The NHL CSS list has ~450 ranked prospects across all 4 categories each year.
-# Using a constant means CSS#1 → ~1.0 and CSS#450 → ~0.0 in both phases.
-# predict.py uses the same constant at inference so there's no distribution shift.
-CSS_RANK_DENOM = 450
+# CSS publishes three independent ranked lists each year:
+#   NA Skaters  (~250 players, ranks 1–~250)
+#   EUR Skaters (~100 players, ranks 1–~400)
+#   Goalies     (~30-50 players, ranks ~365–~465)
+#
+# These lists are NOT comparable by raw rank: EUR #5 ≠ NA #5 in draft value.
+# We normalize within each list using within-list ordinal rank (1st, 2nd, 3rd...)
+# so the best NA skater, best EUR skater, and best goalie all score ~1.0.
+# List identity is inferred from position + nationality + league.
+
+# European nationality codes used to classify EUR vs NA skaters.
+_EUR_NATIONALITIES = frozenset({
+    "SWE", "FIN", "RUS", "CZE", "SVK", "CHE", "DEU", "NOR", "DNK",
+    "AUT", "LVA", "UKR", "BLR", "FRA", "SLO", "SVN", "BEL", "GBR",
+})
+
+# League name fragments that indicate a European league.
+_EUR_LEAGUE_FRAGMENTS = ("SWEDEN", "FINLAND", "RUSSIA", "KHL", "SHL", "LIIGA",
+                         "EXTRALIGA", "NLA", "CZECH", "SLOVAK", "NORWAY", "DENMARK",
+                         "AUSTRIA", "SWISS", "DEL", "MESTIS", "ALLSVENSKAN")
 
 
-def _css_norm(css_rank: int) -> float:
+def _css_list(position: str | None, nationality: str | None, draft_league: str | None) -> str:
     """
-    Convert a CSS rank to a normalized quality score in [0, 1].
+    Return which CSS list a prospect belongs to: 'na_skater', 'eur_skater', or 'goalie'.
 
-    Uses square-root scaling so gaps between top prospects are amplified:
-      CSS#1  → 1.000
-      CSS#2  → 0.977  (linear would give 0.998 — indistinguishable from #1)
-      CSS#5  → 0.943
-      CSS#10 → 0.905
-      CSS#32 → 0.834
-      CSS#225 → 0.500
-      CSS#450 → 0.047
+    CSS publishes separate NA Skater, EUR Skater, and Goalie lists annually.
+    Goalies are identified by position. Skaters are split by nationality/league.
+    """
+    pos = (position or "").upper().split("/")[0]
+    if pos == "G":
+        return "goalie"
+    nat = (nationality or "").upper()
+    league = (draft_league or "").upper()
+    if nat in _EUR_NATIONALITIES:
+        return "eur_skater"
+    if any(frag in league for frag in _EUR_LEAGUE_FRAGMENTS):
+        return "eur_skater"
+    return "na_skater"
 
-    The sqrt(rank / CSS_RANK_DENOM) formula is used so training and inference
-    are on the same scale — predict.py imports and uses this same function.
+
+def _css_norm_within_list(within_list_rank: int, list_size: int) -> float:
+    """
+    Convert a within-list ordinal rank (1 = best on that list) to [0, 1].
+
+    Uses sqrt scaling so the gap between #1 and #2 is amplified vs. #50 vs #51.
+    list_size is the total number of ranked players on this list in this cohort.
+    Falls back to list_size=100 when the list is empty (shouldn't happen in practice).
     """
     import math
-    return max(0.0, 1.0 - math.sqrt((css_rank - 1) / CSS_RANK_DENOM))
+    denom = max(list_size, 1)
+    return max(0.0, 1.0 - math.sqrt((within_list_rank - 1) / denom))
 
 
 def _compute_predraft_quality(year_picks: list) -> dict[int, float]:
     """
-    Compute css_rank_norm for each pick in a draft year using _css_norm().
+    Compute css_rank_norm for each pick in a draft year.
+
+    Strategy: group picks by CSS list (na_skater / eur_skater / goalie), sort each
+    group by raw css_rank ascending, then assign within-list ordinal rank (1 = best).
+    _css_norm_within_list() converts that to [0,1] using the list's own size as
+    the denominator, so #1 on any list scores ~1.0 regardless of raw rank number.
+
+    This fixes the cross-list comparison problem: CSS assigns EUR skaters ranks
+    like 1–400 and goalies ranks like 365–465. Raw rank comparison would make
+    a EUR #5 (great prospect) look worse than a NA #5 just because the number is
+    similar but the lists are independent scales.
+
     Falls back to round-normalized pick position for pre-2008 or unranked picks.
     """
     has_css = [p for p in year_picks if getattr(p, "css_rank", None) is not None]
@@ -453,8 +491,21 @@ def _compute_predraft_quality(year_picks: list) -> dict[int, float]:
     result: dict[int, float] = {}
 
     if css_coverage >= 0.5:
+        # Group by CSS list, sort by raw rank within each list
+        by_list: dict[str, list] = {}
         for p in has_css:
-            result[p.id] = _css_norm(p.css_rank)
+            lst = _css_list(
+                getattr(p, "position", None),
+                getattr(p, "nationality", None),
+                getattr(p, "draft_league", None),
+            )
+            by_list.setdefault(lst, []).append(p)
+
+        for lst, players in by_list.items():
+            sorted_players = sorted(players, key=lambda p: p.css_rank)
+            list_size = len(sorted_players)
+            for within_rank, p in enumerate(sorted_players, start=1):
+                result[p.id] = _css_norm_within_list(within_rank, list_size)
 
     # Round-position fallback for picks without CSS rank
     missing = [p for p in year_picks if p.id not in result]

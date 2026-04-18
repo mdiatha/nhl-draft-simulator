@@ -92,7 +92,7 @@ async def train_model(final: bool = False, db: Session = Depends(get_db)):
         raise HTTPException(status_code=422, detail=str(e))
     except Exception as e:
         logger.exception("Training failed")
-        raise HTTPException(status_code=500, detail=f"Training error: {e}")
+        raise HTTPException(status_code=500, detail="Training failed due to an internal error. Check server logs.")
     finally:
         _release_training_lock()
 

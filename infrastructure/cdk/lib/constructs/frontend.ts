@@ -15,7 +15,7 @@ export interface FrontendConstructProps {
 
 /**
  * CloudFront distribution for the React SPA.
- * Uses Origin Access Control (OAC) — the modern replacement for OAI.
+ * Uses Origin Access Control (OAC) - the modern replacement for OAI.
  * 404s are remapped to index.html so React Router handles client-side routes.
  */
 export class FrontendConstruct extends Construct {
@@ -44,7 +44,7 @@ export class FrontendConstruct extends Construct {
     }
 
     this.distribution = new cloudfront.Distribution(this, 'Distribution', {
-      comment: 'NHL Draft Simulator — React SPA',
+      comment: 'NHL Draft Simulator - React SPA',
       defaultRootObject: 'index.html',
       domainNames: aliases.length > 0 ? aliases : undefined,
       ...(certificate ? { certificate } : {}),

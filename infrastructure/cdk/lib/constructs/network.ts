@@ -28,7 +28,7 @@ export class NetworkConstruct extends Construct {
       vpcName: `${prefix}-vpc`,
       ipAddresses: ec2.IpAddresses.cidr('10.0.0.0/16'),
       maxAzs: 2,
-      natGateways: 0, // no NAT — saves $32/mo
+      natGateways: 0, // no NAT - saves $32/mo
       subnetConfiguration: [
         {
           name: 'public',
@@ -49,7 +49,7 @@ export class NetworkConstruct extends Construct {
 
     // ── Security groups ────────────────────────────────────────────────────────
 
-    // API Gateway VPC link ENIs — egress only
+    // API Gateway VPC link ENIs - egress only
     this.apigwVpcLinkSg = new ec2.SecurityGroup(this, 'ApigwVpcLinkSg', {
       vpc: this.vpc,
       securityGroupName: `${prefix}-apigw-vpc-link`,
@@ -58,11 +58,11 @@ export class NetworkConstruct extends Construct {
     });
     cdk.Tags.of(this.apigwVpcLinkSg).add('Name', `${prefix}-apigw-vpc-link-sg`);
 
-    // Private ALB — HTTP inbound from API Gateway VPC link only
+    // Private ALB - HTTP inbound from API Gateway VPC link only
     this.albSg = new ec2.SecurityGroup(this, 'AlbSg', {
       vpc: this.vpc,
       securityGroupName: `${prefix}-alb`,
-      description: 'Private ALB — HTTP inbound from API Gateway VPC link only',
+      description: 'Private ALB - HTTP inbound from API Gateway VPC link only',
       allowAllOutbound: true,
     });
     this.albSg.addIngressRule(
@@ -72,11 +72,11 @@ export class NetworkConstruct extends Construct {
     );
     cdk.Tags.of(this.albSg).add('Name', `${prefix}-alb-sg`);
 
-    // ECS instances — app port inbound from ALB only
+    // ECS instances - app port inbound from ALB only
     this.ecsSg = new ec2.SecurityGroup(this, 'EcsSg', {
       vpc: this.vpc,
       securityGroupName: `${prefix}-ecs`,
-      description: 'ECS container instances — app port inbound from ALB only',
+      description: 'ECS container instances - app port inbound from ALB only',
       allowAllOutbound: true,
     });
     this.ecsSg.addIngressRule(
@@ -86,11 +86,11 @@ export class NetworkConstruct extends Construct {
     );
     cdk.Tags.of(this.ecsSg).add('Name', `${prefix}-ecs-sg`);
 
-    // RDS — PostgreSQL inbound from ECS only, no outbound
+    // RDS - PostgreSQL inbound from ECS only, no outbound
     this.rdsSg = new ec2.SecurityGroup(this, 'RdsSg', {
       vpc: this.vpc,
       securityGroupName: `${prefix}-rds`,
-      description: 'PostgreSQL — inbound from app tier only, no outbound',
+      description: 'PostgreSQL - inbound from app tier only, no outbound',
       allowAllOutbound: false,
     });
     this.rdsSg.addIngressRule(

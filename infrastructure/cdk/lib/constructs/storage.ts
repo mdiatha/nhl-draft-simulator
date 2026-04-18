@@ -33,7 +33,7 @@ export class StorageConstruct extends Construct {
     });
     cdk.Tags.of(this.modelsBucket).add('Name', `${prefix}-models`);
 
-    // React frontend static hosting — served via CloudFront OAC
+    // React frontend static hosting - served via CloudFront OAC
     this.frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
       bucketName: cdk.PhysicalName.GENERATE_IF_NEEDED,
       blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,

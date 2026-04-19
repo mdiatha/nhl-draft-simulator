@@ -36,7 +36,7 @@ _redis, _REDIS_OK = get_redis()
 
 def _fetch_standings() -> list[dict]:
     """Pull raw standings from the NHL API."""
-    with httpx.Client(timeout=10) as client:
+    with httpx.Client(timeout=10, follow_redirects=True) as client:
         resp = client.get(NHL_STANDINGS_URL)
         resp.raise_for_status()
         data = resp.json()
@@ -57,7 +57,7 @@ def _parse_team(entry: dict) -> dict:
     return {
         "nhl_id":        entry.get("teamId"),
         "abbreviation":  abbrev,
-        "team_name":     f"{city} {name}".strip() if city else name,
+        "team_name":     name,
         "city":          city,
         "conference":    entry.get("conferenceName", ""),
         "division":      entry.get("divisionName", ""),

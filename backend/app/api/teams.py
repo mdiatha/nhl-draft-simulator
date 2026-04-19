@@ -6,7 +6,7 @@ from app.middleware.auth import require_admin_key
 from app.models.team import Team
 from app.schemas.team import TeamCreate, TeamRead
 
-router = APIRouter()
+router = APIRouter(prefix="/teams", tags=["teams"])
 
 
 @router.get("/", response_model=list[TeamRead])

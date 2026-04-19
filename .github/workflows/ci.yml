@@ -238,9 +238,11 @@ jobs:
           docker push "$ECR_REGISTRY/nhl-draft-api:${{ github.sha }}"
           docker push "$ECR_REGISTRY/nhl-draft-api:latest"
 
-  # - Deploy to ECS (main branch only) -
+  # - Deploy to EC2 (main branch only) -
+  # Architecture: single EC2 running Docker Compose (API + Postgres + Redis + Ollama).
+  # Deploy = pull latest ECR image on the instance, run migrations, restart the api container.
   deploy:
-    name: Deploy to ECS
+    name: Deploy to EC2
     runs-on: ubuntu-latest
     needs: [backend, integration, migrations, docker, cdk-synth, cdk-diff]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -257,56 +259,38 @@ jobs:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
-      - name: Run Alembic migration task
+      - name: Deploy via SSM Run Command
         env:
-          ECS_CLUSTER: nhl-draft-production-cluster
-          ECS_MIGRATION_TASK: nhl-draft-production-api-migrate
+          EC2_INSTANCE_ID: ${{ secrets.EC2_INSTANCE_ID }}
+          IMAGE_TAG: ${{ github.sha }}
         run: |
-          read -r TASK_ARN FAILURE_REASON <<<"$(aws ecs run-task \
-            --cluster "$ECS_CLUSTER" \
-            --launch-type EC2 \
-            --task-definition "$ECS_MIGRATION_TASK" \
-            --count 1 \
-            --query "[tasks[0].taskArn,failures[0].reason]" \
-            --output text)"
-
-          if [ "$TASK_ARN" = "None" ] || [ -z "$TASK_ARN" ]; then
-            echo "Migration task failed to start: $FAILURE_REASON"
-            exit 1
-          fi
-
-          echo "Migration task: $TASK_ARN"
-          aws ecs wait tasks-stopped --cluster "$ECS_CLUSTER" --tasks "$TASK_ARN"
-
-          EXIT_CODE=$(aws ecs describe-tasks \
-            --cluster "$ECS_CLUSTER" \
-            --tasks "$TASK_ARN" \
-            --query "tasks[0].containers[0].exitCode" \
+          # Commands run on the remote EC2 instance — variables expand there, not here.
+          # shellcheck disable=SC2016
+          COMMAND_ID=$(aws ssm send-command \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name "AWS-RunShellScript" \
+            --parameters '{"commands":["set -euxo pipefail","REGION=$(curl -s http://169.254.169.254/latest/meta-data/placement/region)","ECR_ACCOUNT=$(aws sts get-caller-identity --query Account --output text --region $REGION)","ECR_REG=\"$ECR_ACCOUNT.dkr.ecr.$REGION.amazonaws.com\"","aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REG","cd /home/ec2-user","docker compose pull api","docker compose run --rm api alembic upgrade head","docker compose up -d --no-deps api","sleep 10","curl -fsSL http://localhost/livez"]}' \
+            --query "Command.CommandId" \
             --output text)
 
-          if [ "$EXIT_CODE" != "0" ]; then
-            echo "Migration task failed with exit code $EXIT_CODE"
-            aws ecs describe-tasks \
-              --cluster "$ECS_CLUSTER" \
-              --tasks "$TASK_ARN" \
-              --query "tasks[0].containers[0].reason" \
-              --output text
+          echo "SSM Command ID: $COMMAND_ID"
+          aws ssm wait command-executed \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" || true
+
+          STATUS=$(aws ssm get-command-invocation \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query "Status" --output text)
+
+          echo "Deploy status: $STATUS"
+          if [ "$STATUS" != "Success" ]; then
+            aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query "StandardErrorContent" --output text
             exit 1
           fi
-
-      - name: Roll ECS service forward
-        env:
-          ECS_CLUSTER: nhl-draft-production-cluster
-          ECS_SERVICE: nhl-draft-production-api
-        run: |
-          aws ecs update-service \
-            --cluster "$ECS_CLUSTER" \
-            --service "$ECS_SERVICE" \
-            --force-new-deployment
-
-          aws ecs wait services-stable \
-            --cluster "$ECS_CLUSTER" \
-            --services "$ECS_SERVICE"
 
       - name: Backend smoke tests
         env:

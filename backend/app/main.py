@@ -29,7 +29,7 @@ from app.api.standings import router as standings_router
 # Configure structured JSON logging before anything else emits a log line
 configure_logging()
 
-import logging
+import logging  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
@@ -257,7 +257,7 @@ async def prometheus_middleware(request: Request, call_next):
 # Backward-compat: routers are also mounted at /api for clients that haven't
 # migrated.  /api/v1 is the canonical path.  In a future major release, the
 # /api alias will be removed and clients must use /api/v1.
-from fastapi import APIRouter as _APIRouter
+from fastapi import APIRouter as _APIRouter  # noqa: E402
 
 _v1 = _APIRouter(prefix="/api/v1")
 _v1.include_router(teams.router)       # /api/v1/teams/...

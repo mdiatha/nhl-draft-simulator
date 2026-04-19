@@ -213,7 +213,7 @@ def gm_profile_to_text(gm_name: str, team_name: str, profile) -> str:
         f"GM: {gm_name} | Team: {team_name}",
         f"Archetype: {profile.tendency_archetype or 'unknown'}",
         f"Top positions drafted: {', '.join(f'{p}({w:.0%})' for p,w in top_pos)}",
-        f"Preferred leagues: {', '.join(f'{l}({w:.0%})' for l,w in top_leagues)}",
+        f"Preferred leagues: {', '.join(f'{lg}({w:.0%})' for lg,w in top_leagues)}",
         f"Nationality tendencies: {', '.join(f'{n}({w:.0%})' for n,w in top_nations)}",
     ]
     if profile.avg_ranking_deviation is not None:

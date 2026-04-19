@@ -284,7 +284,8 @@ def _random_baseline_metrics(pool_sizes: list[int]) -> dict:
     if not pool_sizes:
         return {"top1_accuracy": 0.0, "top3_accuracy": 0.0, "top5_accuracy": 0.0, "mrr": 0.0}
 
-    harmonic = lambda n: sum(1.0 / i for i in range(1, n + 1))
+    def harmonic(n: int) -> float:
+        return sum(1.0 / i for i in range(1, n + 1))
     n = len(pool_sizes)
     return {
         "top1_accuracy": round(sum(1.0 / size for size in pool_sizes) / n, 3),
@@ -317,9 +318,12 @@ def _compute_metrics(
         if rnd not in by_round:
             by_round[rnd] = {"n": 0, "top1": 0, "top3": 0, "top5": 0}
         by_round[rnd]["n"] += 1
-        if r.actual_rank == 1:  by_round[rnd]["top1"] += 1
-        if r.actual_rank <= 3:  by_round[rnd]["top3"] += 1
-        if r.actual_rank <= 5:  by_round[rnd]["top5"] += 1
+        if r.actual_rank == 1:
+            by_round[rnd]["top1"] += 1
+        if r.actual_rank <= 3:
+            by_round[rnd]["top3"] += 1
+        if r.actual_rank <= 5:
+            by_round[rnd]["top5"] += 1
 
     for rnd, d in by_round.items():
         d["top1_pct"] = round(d["top1"] / d["n"], 3)
@@ -333,8 +337,10 @@ def _compute_metrics(
         if arch not in by_arch:
             by_arch[arch] = {"n": 0, "top1": 0, "top3": 0}
         by_arch[arch]["n"] += 1
-        if r.actual_rank == 1:  by_arch[arch]["top1"] += 1
-        if r.actual_rank <= 3:  by_arch[arch]["top3"] += 1
+        if r.actual_rank == 1:
+            by_arch[arch]["top1"] += 1
+        if r.actual_rank <= 3:
+            by_arch[arch]["top3"] += 1
 
     for arch, d in by_arch.items():
         d["top1_pct"] = round(d["top1"] / d["n"], 3)

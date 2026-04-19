@@ -208,7 +208,7 @@ class TestBuildFeaturesIntegration:
         df_raw = build_training_dataset(fifty_pick_db)
         feat_df = build_features(df_raw)
 
-        for col in ["css_rank_norm", "pick_slot_norm"]:
+        for col in ["pick_slot_norm", "rank_vs_slot"]:
             assert feat_df[col].between(0.0, 1.0).all(), (
                 f"{col} values must be in [0, 1]"
             )

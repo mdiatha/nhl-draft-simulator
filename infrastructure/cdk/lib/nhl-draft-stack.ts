@@ -61,9 +61,21 @@ export class NhlDraftStack extends cdk.Stack {
     adminApiKeyParam.grantRead(instanceRole);
     dbPasswordParam.grantRead(instanceRole);
 
+    // ---- VPC (default VPC — looked up at deploy time via context) ----------------
+    // fromLookup requires account+region; in CI without credentials we use a dummy
+    // VPC attribute set so cdk synth succeeds for validation.
+    const vpc = ec2.Vpc.fromVpcAttributes(this, 'DefaultVpc', {
+      vpcId: this.node.tryGetContext('vpcId') ?? 'vpc-00000000',
+      availabilityZones: [this.region + 'a', this.region + 'b'],
+      publicSubnetIds: [
+        this.node.tryGetContext('subnetId1') ?? 'subnet-00000001',
+        this.node.tryGetContext('subnetId2') ?? 'subnet-00000002',
+      ],
+    });
+
     // ---- Security group -------------------------------------------------------
     const sg = new ec2.SecurityGroup(this, 'InstanceSg', {
-      vpc: ec2.Vpc.fromLookup(this, 'DefaultVpc', { isDefault: true }),
+      vpc,
       description: 'NHL Draft EC2 - allow HTTP/HTTPS inbound',
       allowAllOutbound: true,
     });
@@ -120,7 +132,6 @@ export class NhlDraftStack extends cdk.Stack {
     );
 
     // ---- EC2 instance ---------------------------------------------------------
-    const vpc = ec2.Vpc.fromLookup(this, 'DefaultVpcRef', { isDefault: true });
     const instance = new ec2.Instance(this, 'Instance', {
       instanceType: ec2.InstanceType.of(ec2.InstanceClass.T3, ec2.InstanceSize.SMALL),
       machineImage: ec2.MachineImage.latestAmazonLinux2023(),
@@ -155,6 +166,18 @@ export class NhlDraftStack extends cdk.Stack {
     cdk.Tags.of(frontendBucket).add('Name', `${prefix}-frontend`);
 
     // ---- CloudFront ----------------------------------------------------------
+    // CloudFront requires a domain name (not raw IP) as origin.
+    // The EC2 DNS is derived from the Elastic IP (54.174.178.24 -> ec2-54-174-178-24.compute-1.amazonaws.com).
+    // If the EIP changes, update this value accordingly.
+    const ec2ApiDns: string = ctx('ec2ApiDns') ?? 'ec2-54-174-178-24.compute-1.amazonaws.com';
+    const apiOrigin = new cloudfront_origins.HttpOrigin(ec2ApiDns, {
+      protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
+      httpPort: 80,
+      connectionAttempts: 2,
+      connectionTimeout: cdk.Duration.seconds(5),
+      readTimeout: cdk.Duration.seconds(60),
+    });
+
     const distribution = new cloudfront.Distribution(this, 'Distribution', {
       comment: 'NHL Draft Simulator - React SPA',
       defaultRootObject: 'index.html',
@@ -165,8 +188,19 @@ export class NhlDraftStack extends cdk.Stack {
         compress: true,
         cachePolicy: cloudfront.CachePolicy.CACHING_OPTIMIZED,
       },
+      additionalBehaviors: {
+        '/api/*': {
+          origin: apiOrigin,
+          allowedMethods: cloudfront.AllowedMethods.ALLOW_ALL,
+          viewerProtocolPolicy: cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+          cachePolicy: cloudfront.CachePolicy.CACHING_DISABLED,
+          originRequestPolicy: cloudfront.OriginRequestPolicy.ALL_VIEWER_EXCEPT_HOST_HEADER,
+        },
+      },
       errorResponses: [{
-        httpStatus: 404,
+        // S3 returns 403 for missing keys (not 404). Rewrite to index.html for SPA routing.
+        // We intentionally do NOT rewrite 404 so API 404s (from EC2) pass through unchanged.
+        httpStatus: 403,
         responseHttpStatus: 200,
         responsePagePath: '/index.html',
         ttl: cdk.Duration.seconds(0),

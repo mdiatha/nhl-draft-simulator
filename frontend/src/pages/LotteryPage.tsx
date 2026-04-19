@@ -68,8 +68,8 @@ export default function LotteryPage() {
         b.points - a.points
       )
     }
-    // default: points desc
-    return [...list].sort((a, b) => b.points - a.points || b.row - a.row)
+    // default: points ASC (worst → best, matching lottery seeding)
+    return [...list].sort((a, b) => a.points - b.points || a.row - b.row)
   })()
 
   const liveSimulationTeams: LotterySimulationTeam[] = allTeams.map(team => ({

@@ -90,7 +90,7 @@ async def train_model(final: bool = False, db: Session = Depends(get_db)):
         metrics = train_from_db(db, final=final)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
+    except Exception:
         logger.exception("Training failed")
         raise HTTPException(status_code=500, detail="Training failed due to an internal error. Check server logs.")
     finally:

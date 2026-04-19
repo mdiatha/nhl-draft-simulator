@@ -2,13 +2,13 @@ import { Routes, Route } from 'react-router-dom'
 import { Suspense, lazy } from 'react'
 import Nav from './components/ui/Nav'
 import ErrorBoundary from './components/ui/ErrorBoundary'
+import ScoutWidget from './components/scout/ScoutWidget'
 
 const HomePage = lazy(() => import('./pages/HomePage'))
 const LotteryPage = lazy(() => import('./pages/LotteryPage'))
 const DraftPage = lazy(() => import('./pages/DraftPage'))
 const TeamPage = lazy(() => import('./pages/TeamPage'))
 const ProspectsPage = lazy(() => import('./pages/ProspectsPage'))
-const ScoutPage = lazy(() => import('./pages/ScoutPage'))
 const ScenarioPage = lazy(() => import('./pages/ScenarioPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
@@ -32,11 +32,11 @@ export default function App() {
             <Route path="/draft" element={<DraftPage />} />
             <Route path="/teams/:teamId" element={<TeamPage />} />
             <Route path="/prospects" element={<ProspectsPage />} />
-            <Route path="/scout" element={<ScoutPage />} />
             <Route path="/scenario" element={<ScenarioPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>
+        <ScoutWidget />
       </div>
     </ErrorBoundary>
   )

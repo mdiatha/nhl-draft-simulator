@@ -440,7 +440,6 @@ def seed_2025_prospects(db: Session, force: bool = False) -> int:
         weight_kg = round(weight_lbs * 0.453592) if weight_lbs else None
 
         overall = pick.get("overallPickNumber") or 0
-        round_num = pick.get("roundNumber") or 1
         gp = pick.get("gamesPlayed") or 0
         g = pick.get("goals") or 0
         a = pick.get("assists") or 0

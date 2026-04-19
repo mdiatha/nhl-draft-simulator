@@ -258,7 +258,7 @@ def compute_all_gm_tendencies(db: Session) -> list[GMTendencyProfile]:
     priors = _compute_priors(all_picks)
     logger.info(f"Population priors computed from {len(all_picks)} historical picks")
 
-    active_gms = db.query(GeneralManager).filter(GeneralManager.is_active == True).all()
+    active_gms = db.query(GeneralManager).filter(GeneralManager.is_active).all()
     profiles = []
 
     for gm in active_gms:
@@ -376,10 +376,7 @@ def validate_archetypes(profiles: list) -> list[dict]:
     for profile in profiles:
         gm_name = getattr(profile, "gm_name", None) or ""
         computed = getattr(profile, "tendency_archetype", "BPA") or "BPA"
-        total_picks = 0
-        # Extract total_picks if available (stored in profile or accessible via GM)
-        if hasattr(profile, "gm") and profile.gm:
-            pass  # total_picks tracked via tendency computation, not persisted directly
+        # total_picks tracked via tendency computation, not persisted directly
 
         for name_key, expected in KNOWN_ARCHETYPES.items():
             if name_key.lower() in gm_name.lower():

@@ -38,7 +38,7 @@ from app.ml.features import FEATURE_COLS, build_features, build_training_dataset
 
 logger = logging.getLogger(__name__)
 
-from app.ml.registry import MODEL_PATH, MODEL_DIR  # single source of truth for model location
+from app.ml.registry import MODEL_PATH, MODEL_DIR  # noqa: E402  single source of truth for model location
 TRAIN_HISTORY_PATH = Path(__file__).parent / "train_history.jsonl"   # one JSON record per line
 
 TRAIN_CUTOFF_YEAR    = 2020   # inclusive upper bound for training split
@@ -126,16 +126,33 @@ def train(
         return model, float("nan")
 
     # ── Evaluation mode: temporal split ──────────────────────────────────────
+    _group_keys = [c for c in ["year", "overall_pick"] if c in df.columns]
+
     if "year" in df.columns:
         train_df = df[df["year"] <= TRAIN_CUTOFF_YEAR]
         val_df   = df[df["year"] >= VAL_START_YEAR]
         if len(val_df) == 0 or val_df[target_col].nunique() < 2:
             logger.warning("Temporal val split empty — falling back to random 80/20 split")
             from sklearn.model_selection import train_test_split
-            train_df, val_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df[target_col])
+            # Split by unique groups to keep groups contiguous after split
+            unique_groups = df[_group_keys].drop_duplicates()
+            train_groups, val_groups = train_test_split(unique_groups, test_size=0.2, random_state=42)
+            train_df = df.merge(train_groups, on=_group_keys)
+            val_df   = df.merge(val_groups,   on=_group_keys)
     else:
         from sklearn.model_selection import train_test_split
-        train_df, val_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df[target_col])
+        unique_groups = df[_group_keys].drop_duplicates() if _group_keys else None
+        if unique_groups is not None and len(unique_groups) > 1:
+            train_groups, val_groups = train_test_split(unique_groups, test_size=0.2, random_state=42)
+            train_df = df.merge(train_groups, on=_group_keys)
+            val_df   = df.merge(val_groups,   on=_group_keys)
+        else:
+            train_df, val_df = train_test_split(df, test_size=0.2, random_state=42, stratify=df[target_col])
+
+    # XGBoost ranker requires groups to be contiguous — sort both splits by group key
+    if _group_keys:
+        train_df = train_df.sort_values(_group_keys).reset_index(drop=True)
+        val_df   = val_df.sort_values(_group_keys).reset_index(drop=True)
 
     X_train  = build_features(train_df)
     X_val    = build_features(val_df)
@@ -214,7 +231,7 @@ def train_from_db(db, final: bool = False) -> dict:
     training_report = run_training_checks(df)
     if not training_report.passed:
         raise ValueError(
-            f"Training data quality checks failed: "
+            "Training data quality checks failed: "
             + ", ".join(c.name for c in training_report.failed_checks)
         )
 
@@ -228,7 +245,7 @@ def train_from_db(db, final: bool = False) -> dict:
         model_report = run_model_quality_checks(auc, feature_importances)
         if not model_report.passed:
             raise ValueError(
-                f"Model quality checks failed: "
+                "Model quality checks failed: "
                 + ", ".join(c.name for c in model_report.failed_checks)
             )
 

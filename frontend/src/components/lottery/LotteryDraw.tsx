@@ -5,6 +5,7 @@ import { lotteryApi } from '../../lib/api'
 import { useDraftStore } from '../../stores/draftStore'
 import { useLotteryStore } from '../../stores/lotteryStore'
 import { getTeamColors, getTeamLogo } from '../../lib/teamColors'
+import { DRAFT_YEAR } from '../../lib/config'
 import type { LotteryPick, LotterySimulationTeam } from '../../types'
 
 interface Props {
@@ -65,7 +66,7 @@ export default function LotteryDraw({ onComplete, seed, teams }: Props) {
   if (phase === 'complete') {
     return (
       <div className="space-y-3">
-        <h2 className="text-xl font-bold text-white mb-4">2025 Draft Order</h2>
+        <h2 className="text-xl font-bold text-white mb-4">{DRAFT_YEAR} Draft Order</h2>
         {lotteryResult.map((pick, idx) => {
           const colors = getTeamColors(pick.abbreviation)
           const isLotteryWinner = pick.pick <= 2 && (pick.original_standing ?? 0) > pick.pick

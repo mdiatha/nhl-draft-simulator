@@ -225,11 +225,11 @@ jobs:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
         run: |
           docker tag nhl-draft-api:${{ github.sha }} \
-            $ECR_REGISTRY/nhl-draft-api:${{ github.sha }}
+            "$ECR_REGISTRY/nhl-draft-api:${{ github.sha }}"
           docker tag nhl-draft-api:${{ github.sha }} \
-            $ECR_REGISTRY/nhl-draft-api:latest
-          docker push $ECR_REGISTRY/nhl-draft-api:${{ github.sha }}
-          docker push $ECR_REGISTRY/nhl-draft-api:latest
+            "$ECR_REGISTRY/nhl-draft-api:latest"
+          docker push "$ECR_REGISTRY/nhl-draft-api:${{ github.sha }}"
+          docker push "$ECR_REGISTRY/nhl-draft-api:latest"
 
   # - Deploy to ECS (main branch only) -
   deploy:
@@ -256,7 +256,7 @@ jobs:
           ECS_CLUSTER: nhl-draft-production-cluster
           ECS_MIGRATION_TASK: nhl-draft-production-api-migrate
         run: |
-          read TASK_ARN FAILURE_REASON <<<"$(aws ecs run-task \
+          read -r TASK_ARN FAILURE_REASON <<<"$(aws ecs run-task \
             --cluster "$ECS_CLUSTER" \
             --launch-type EC2 \
             --task-definition "$ECS_MIGRATION_TASK" \
@@ -303,10 +303,10 @@ jobs:
             --services "$ECS_SERVICE"
 
       - name: Backend smoke tests
-        if: ${{ secrets.VITE_API_URL != '' }}
         env:
           API_BASE_URL: ${{ secrets.VITE_API_URL }}
         run: |
+          if [ -z "$API_BASE_URL" ]; then echo "VITE_API_URL not set, skipping smoke tests"; exit 0; fi
           curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/livez" > /dev/null
           curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/readyz" > /dev/null
           curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/api/ml/status" > /dev/null
@@ -368,10 +368,10 @@ jobs:
             --paths "/*"
 
       - name: Frontend smoke test
-        if: ${{ secrets.FRONTEND_URL != '' }}
         env:
           FRONTEND_URL: ${{ secrets.FRONTEND_URL }}
         run: |
+          if [ -z "$FRONTEND_URL" ]; then echo "FRONTEND_URL not set, skipping smoke test"; exit 0; fi
           curl -fsSL --retry 5 --retry-delay 5 "$FRONTEND_URL" | grep -qi "<!doctype html"
 
   # - Update Lambda function code (main branch only) -

@@ -366,29 +366,3 @@ jobs:
           if [ -z "$FRONTEND_URL" ]; then echo "FRONTEND_URL not set, skipping smoke test"; exit 0; fi
           curl -fsSL --retry 5 --retry-delay 5 "$FRONTEND_URL" | grep -qi "<!doctype html"
 
-  # - Update Lambda function code (main branch only) -
-  deploy-lambda:
-    name: Deploy ingestion Lambda
-    runs-on: ubuntu-latest
-    needs: [deploy]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    permissions:
-      id-token: write
-      contents: read
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ secrets.AWS_REGION }}
-
-      - name: Package and update Lambda
-        run: |
-          cd lambda/ingestion
-          zip -j ingestion_trigger.zip handler.py
-          aws lambda update-function-code \
-            --function-name nhl-draft-production-ingestion-trigger \
-            --zip-file fileb://ingestion_trigger.zip

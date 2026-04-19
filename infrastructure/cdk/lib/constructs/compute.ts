@@ -55,7 +55,7 @@ export class ComputeConstruct extends Construct {
       repositoryName: 'nhl-draft-api',
       imageScanOnPush: true,
       imageTagMutability: ecr.TagMutability.MUTABLE,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
       lifecycleRules: [
         {
           rulePriority: 1,
@@ -142,7 +142,7 @@ export class ComputeConstruct extends Construct {
       blockDevices: [
         {
           deviceName: '/dev/xvda',
-          volume: ec2.BlockDeviceVolume.ebs(20, {
+          volume: ec2.BlockDeviceVolume.ebs(30, {
             volumeType: ec2.EbsDeviceVolumeType.GP3,
             encrypted: true,
           }),
@@ -209,7 +209,7 @@ export class ComputeConstruct extends Construct {
       vpc,
       subnetGroupName: `${prefix}-db-subnet-group`,
       vpcSubnets: { subnetType: ec2.SubnetType.PRIVATE_ISOLATED },
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
     const dbCredentials = rds.Credentials.fromGeneratedSecret('nhl', {
@@ -234,11 +234,11 @@ export class ComputeConstruct extends Construct {
       securityGroups: [rdsSecurityGroup],
       publiclyAccessible: false,
       multiAz: false, // single-AZ saves ~$15/mo
-      backupRetention: cdk.Duration.days(7),
+      backupRetention: cdk.Duration.days(0), // 0 = disabled; free-tier accounts cap at 0
       preferredBackupWindow: '03:00-04:00',
       preferredMaintenanceWindow: 'Mon:04:00-Mon:05:00',
-      deletionProtection: true,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      deletionProtection: false,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
       cloudwatchLogsExports: ['postgresql'],
     });
     cdk.Tags.of(this.rdsInstance).add('Name', `${prefix}-db`);

@@ -26,7 +26,7 @@
     "apiDomainName": "",
     "apiGatewayThrottleBurstLimit": 120,
     "apiGatewayThrottleRateLimit": 60,
-    "monthlyBudgetLimitUsd": 40,
+    "monthlyBudgetLimitUsd": 10,
     "monthlyBudgetAlertThresholdPct": 80,
     "@aws-cdk/aws-signer:signingProfileNamePassedToCfn": true,
     "@aws-cdk/aws-ecs-patterns:secGroupsDisablesImplicitOpenListener": true,

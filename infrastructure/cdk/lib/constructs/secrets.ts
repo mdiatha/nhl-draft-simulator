@@ -40,7 +40,7 @@ export class SecretsConstruct extends Construct {
         secretStringTemplate: JSON.stringify({ DATABASE_URL: 'postgresql+psycopg2://placeholder' }),
         generateStringKey: '_unused',
       },
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
     cdk.Tags.of(this.appSecret).add('Name', `${prefix}-app-secret`);
 

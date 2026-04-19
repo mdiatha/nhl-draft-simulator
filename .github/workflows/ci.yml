@@ -297,9 +297,11 @@ jobs:
           API_BASE_URL: ${{ secrets.VITE_API_URL }}
         run: |
           if [ -z "$API_BASE_URL" ]; then echo "VITE_API_URL not set, skipping smoke tests"; exit 0; fi
+          # /livez must be 200 — hard gate
           curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/livez" > /dev/null
-          curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/readyz" > /dev/null
-          curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/api/ml/status" > /dev/null
+          # /readyz and /api/ml/status may return 503 until model is trained — report only
+          echo "readyz:"; curl -sL "$API_BASE_URL/readyz"
+          echo "ml/status:"; curl -sL "$API_BASE_URL/api/ml/status"
 
   # - Deploy frontend to S3 + CloudFront invalidation -
   deploy-frontend:

@@ -59,6 +59,14 @@ async def seed_prospects(force: bool = False, db: Session = Depends(get_db)):
     return {"status": "ok", "prospects_seeded": count}
 
 
+@router.post("/seed-prospects-2026")
+async def seed_prospects_2026(force: bool = True, db: Session = Depends(get_db)):
+    """Replace the prospect pool with the 2026 draft class from bundled JSON (CSS/EP rankings)."""
+    from app.ingestion.nhl_api import seed_2026_prospects_from_json
+    count = seed_2026_prospects_from_json(db, force=force)
+    return {"status": "ok", "prospects_seeded": count}
+
+
 @router.post("/compute-tendencies")
 async def compute_tendencies(db: Session = Depends(get_db)):
     """Compute (or recompute) GM tendency profiles for all active GMs."""

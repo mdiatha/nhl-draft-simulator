@@ -339,6 +339,59 @@ def fetch_lottery_standings(db: Session) -> list[dict]:
 
 
 
+def seed_2026_prospects_from_json(db: Session, force: bool = False) -> int:
+    """
+    Seed the prospects_2025 table with the 2026 draft class from the bundled
+    prospects_2026.json file (CSS/EliteProspects consensus rankings).
+    Clears existing data when force=True.
+    """
+    from app.models import Prospect2025
+
+    if not force and db.query(Prospect2025).count() > 0:
+        logger.info("prospects_2025 already has data, skipping 2026 seed (pass force=True to overwrite).")
+        return 0
+
+    json_path = os.path.join(os.path.dirname(__file__), "prospects_2026.json")
+    try:
+        with open(json_path, "r") as f:
+            prospects_data = json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load prospects_2026.json: {e}")
+        return 0
+
+    if force:
+        db.query(Prospect2025).delete()
+        db.flush()
+
+    count = 0
+    for p in prospects_data:
+        league_name = p.get("draft_league") or ""
+        tier, _region = get_league_tier(league_name)
+        prospect = Prospect2025(
+            name=p["name"],
+            position=p.get("position", "F"),
+            nationality=p.get("nationality"),
+            height_cm=p.get("height_cm"),
+            weight_kg=p.get("weight_kg"),
+            draft_league=league_name or None,
+            draft_league_tier=tier,
+            css_ranking=p.get("css_ranking"),
+            css_category=p.get("css_category"),
+            games_played=p.get("games_played"),
+            goals=p.get("goals"),
+            assists=p.get("assists"),
+            points=p.get("points"),
+            points_per_game=p.get("points_per_game"),
+            age_at_draft=p.get("age_at_draft"),
+        )
+        db.add(prospect)
+        count += 1
+
+    db.commit()
+    logger.info(f"Seeded {count} 2026 prospects from prospects_2026.json")
+    return count
+
+
 def seed_2025_prospects(db: Session, force: bool = False) -> int:
     """
     Seed the prospects_2025 table by fetching the 2025 draft class from the

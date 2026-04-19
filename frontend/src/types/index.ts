@@ -51,6 +51,8 @@ export interface LotterySimulationTeam {
 
 export interface DraftSimulationPick {
   pick: number
+  round?: number
+  pick_in_round?: number
   team_id: number
   team_name: string
   abbreviation: string

@@ -6,6 +6,7 @@ import { draftApi, lotteryApi } from '../lib/api'
 import { useDraftStore } from '../stores/draftStore'
 import { useLotteryStore } from '../stores/lotteryStore'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
+import { DRAFT_YEAR } from '../lib/config'
 import type { DraftSimulationPick, Team, LotteryPick } from '../types'
 
 type AppPhase = 'idle' | 'drawing' | 'lottery-done' | 'drafting' | 'draft-done'
@@ -94,7 +95,7 @@ export default function HomePage() {
           {/* Header */}
           <div className="flex items-center justify-between mb-5">
             <div>
-              <h1 className="text-2xl font-bold text-white">2025 NHL Draft Simulator</h1>
+              <h1 className="text-2xl font-bold text-white">{DRAFT_YEAR} NHL Draft Simulator</h1>
               <p className="text-text-secondary text-sm mt-0.5">
                 GM tendency · positional need · ML prediction
               </p>
@@ -264,45 +265,62 @@ export default function HomePage() {
             </div>
           )}
 
-          {/* ── Draft done: picks grid ── */}
-          {phase === 'draft-done' && (
-            <div>
-              <p className="text-xs text-text-muted uppercase tracking-widest mb-3">Draft Results · Seed {seed}</p>
-              <div className="flex flex-col gap-1.5">
-                {picks.map((pick, i) => {
-                  const colors = getTeamColors(pick.abbreviation)
-                  return (
-                    <motion.div
-                      key={pick.pick}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.02 }}
-                      onClick={() => navigate(`/teams/${pick.team_id}`)}
-                      className="flex items-center gap-2 p-2.5 rounded-lg bg-bg-card border border-border-subtle hover:bg-bg-hover cursor-pointer transition-colors"
-                      style={{ borderLeft: `3px solid ${colors.primary}` }}
-                    >
-                      <span className="text-base font-black text-white w-7 text-right flex-shrink-0">{pick.pick}</span>
-                      <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 overflow-hidden" style={{ background: colors.primary + '22' }}>
-                        <img src={getTeamLogo(pick.abbreviation)} alt="" className="w-6 h-6 object-contain" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-white font-semibold text-xs truncate">{pick.prospect_name ?? 'TBD'}</div>
-                        <div className="text-text-muted text-xs truncate">
-                          {pick.team_name}{pick.css_rank ? ` · CSS #${pick.css_rank}` : ''}
-                        </div>
-                      </div>
-                      {pick.position && (
-                        <span className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0"
-                          style={{ color: POS_COLORS[pick.position] ?? '#8892a4', background: (POS_COLORS[pick.position] ?? '#8892a4') + '22' }}>
-                          {pick.position}
-                        </span>
-                      )}
-                    </motion.div>
-                  )
-                })}
+          {/* ── Draft done: picks grid grouped by round ── */}
+          {phase === 'draft-done' && (() => {
+            const byRound = new Map<number, DraftSimulationPick[]>()
+            for (const pick of picks) {
+              const r = pick.round ?? 1
+              if (!byRound.has(r)) byRound.set(r, [])
+              byRound.get(r)!.push(pick)
+            }
+            const rounds = Array.from(byRound.entries()).sort(([a], [b]) => a - b)
+            return (
+              <div className="space-y-6">
+                <p className="text-xs text-text-muted uppercase tracking-widest">Draft Results · Seed {seed}</p>
+                {rounds.map(([roundNum, roundPicks]) => (
+                  <div key={roundNum}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-xs font-bold uppercase tracking-widest text-text-muted">Round {roundNum}</span>
+                      <div className="flex-1 h-px bg-border-subtle" />
+                    </div>
+                    <div className="flex flex-col gap-1.5">
+                      {roundPicks.map((pick, i) => {
+                        const colors = getTeamColors(pick.abbreviation)
+                        return (
+                          <motion.div
+                            key={pick.pick}
+                            initial={{ opacity: 0, y: 8 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: Math.min(i * 0.02, 0.4) }}
+                            onClick={() => navigate(`/teams/${pick.team_id}`)}
+                            className="flex items-center gap-2 p-2.5 rounded-lg bg-bg-card border border-border-subtle hover:bg-bg-hover cursor-pointer transition-colors"
+                            style={{ borderLeft: `3px solid ${colors.primary}` }}
+                          >
+                            <span className="text-base font-black text-white w-7 text-right flex-shrink-0">{pick.pick_in_round ?? pick.pick}</span>
+                            <div className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0 overflow-hidden" style={{ background: colors.primary + '22' }}>
+                              <img src={getTeamLogo(pick.abbreviation)} alt="" className="w-6 h-6 object-contain" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-white font-semibold text-xs truncate">{pick.prospect_name ?? 'TBD'}</div>
+                              <div className="text-text-muted text-xs truncate">
+                                {pick.team_name}{pick.css_rank ? ` · CSS #${pick.css_rank}` : ''}
+                              </div>
+                            </div>
+                            {pick.position && (
+                              <span className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+                                style={{ color: POS_COLORS[pick.position] ?? '#8892a4', background: (POS_COLORS[pick.position] ?? '#8892a4') + '22' }}>
+                                {pick.position}
+                              </span>
+                            )}
+                          </motion.div>
+                        )
+                      })}
+                    </div>
+                  </div>
+                ))}
               </div>
-            </div>
-          )}
+            )
+          })()}
     </div>
   )
 }

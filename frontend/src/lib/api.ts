@@ -44,8 +44,8 @@ export const lotteryApi = {
 export const draftApi = {
   getProspects: (params?: Record<string, string | number>) =>
     api.get('/api/draft/prospects', { params }).then(r => r.data),
-  simulate: (lotteryResult: number[], seed?: number) =>
-    api.post('/api/draft/simulate', { lottery_result: lotteryResult, seed }).then(r => r.data),
+  simulate: (lotteryResult: number[], seed?: number, numRounds = 7) =>
+    api.post('/api/draft/simulate', { lottery_result: lotteryResult, seed, num_rounds: numRounds }).then(r => r.data),
 }
 
 export const teamsApi = {

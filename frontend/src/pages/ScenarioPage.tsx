@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { draftApi } from '../lib/api'
+import { draftApi, standingsApi, buildApiUrl } from '../lib/api'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
 import { DRAFT_YEAR } from '../lib/config'
 import type { DraftSimulationPick } from '../types'
@@ -27,25 +27,39 @@ export default function ScenarioPage() {
   const dragOverIdx = useRef<number | null>(null)
 
   useEffect(() => {
-    draftApi.getProspects({ limit: 1 })
-      .catch(() => null)
-      .finally(() => {})
-
-    // Load teams from the lottery odds endpoint (has all 32 teams with abbr + name)
-    fetch('/api/lottery/odds')
-      .then(r => r.json())
-      .then((data: { teams?: { team_id: number; team_name: string; abbreviation: string }[] }) => {
-        if (data.teams) {
-          setTeams(data.teams.map(t => ({
-            team_id: t.team_id,
-            team_name: t.team_name,
-            abbreviation: t.abbreviation,
-          })))
-        }
-      })
-      .catch(() => setError('Failed to load teams. Make sure the backend is running.'))
-      .finally(() => setLoadingTeams(false))
+    loadTeams()
   }, [])
+
+  async function loadTeams() {
+    setLoadingTeams(true)
+    try {
+      // Prefer lottery odds (historical / seeded), fall back to live standings
+      const oddsRes = await fetch(buildApiUrl('/api/lottery/odds'))
+      const oddsData: { teams?: { team_id: number; team_name: string; abbreviation: string }[] } = await oddsRes.json()
+      if (oddsData.teams && oddsData.teams.length > 0) {
+        setTeams(oddsData.teams.map(t => ({
+          team_id: t.team_id,
+          team_name: t.team_name,
+          abbreviation: t.abbreviation,
+        })))
+        return
+      }
+
+      // Fallback: live standings, sorted worst-first (lottery order)
+      const liveData = await standingsApi.getLive()
+      const live: { nhl_id: number; team_name: string; abbreviation: string; points: number; row: number }[] = liveData?.standings ?? []
+      const sorted = [...live].sort((a, b) => a.points - b.points || a.row - b.row)
+      setTeams(sorted.map(t => ({
+        team_id: t.nhl_id,
+        team_name: t.team_name,
+        abbreviation: t.abbreviation,
+      })))
+    } catch {
+      setError('Failed to load teams. Make sure the backend is running.')
+    } finally {
+      setLoadingTeams(false)
+    }
+  }
 
   function handleDragStart(idx: number) {
     dragIdx.current = idx
@@ -111,15 +125,8 @@ export default function ScenarioPage() {
   }
 
   function resetOrder() {
-    // Re-fetch to restore original order
-    setLoadingTeams(true)
     setPicks([])
-    fetch('/api/lottery/odds')
-      .then(r => r.json())
-      .then((data: { teams?: { team_id: number; team_name: string; abbreviation: string }[] }) => {
-        if (data.teams) setTeams(data.teams.map(t => ({ team_id: t.team_id, team_name: t.team_name, abbreviation: t.abbreviation })))
-      })
-      .finally(() => setLoadingTeams(false))
+    loadTeams()
   }
 
   return (
@@ -244,61 +251,78 @@ export default function ScenarioPage() {
           )}
 
           <AnimatePresence>
-            {picks.length > 0 && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-2 gap-2"
-              >
-                {picks.map((pick, i) => {
-                  const colors = getTeamColors(pick.abbreviation)
-                  const posColor = POSITION_COLORS[pick.position ?? ''] ?? '#8892a4'
-                  return (
-                    <motion.div
-                      key={pick.pick}
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.015 }}
-                      className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-card border border-border-subtle"
-                      style={{ borderLeft: `3px solid ${colors.primary}` }}
-                    >
-                      <span className="text-lg font-black text-white w-7 text-right flex-shrink-0">
-                        {pick.pick}
-                      </span>
-                      <div
-                        className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0"
-                        style={{ backgroundColor: colors.primary + '22' }}
-                      >
-                        <img
-                          src={getTeamLogo(pick.abbreviation)}
-                          alt={pick.abbreviation}
-                          className="w-6 h-6 object-contain"
-                          onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                        />
+            {picks.length > 0 && (() => {
+              const byRound = new Map<number, typeof picks>()
+              for (const pick of picks) {
+                const r = pick.round ?? 1
+                if (!byRound.has(r)) byRound.set(r, [])
+                byRound.get(r)!.push(pick)
+              }
+              const rounds = Array.from(byRound.entries()).sort(([a], [b]) => a - b)
+              let globalIdx = 0
+              return (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+                  {rounds.map(([roundNum, roundPicks]) => (
+                    <div key={roundNum}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-xs font-bold uppercase tracking-widest text-text-muted">Round {roundNum}</span>
+                        <div className="flex-1 h-px bg-border-subtle" />
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-white font-semibold text-sm truncate">
-                          {pick.prospect_name}
-                        </div>
-                        <div className="text-text-muted text-xs truncate">
-                          {pick.team_name}
-                          {pick.css_rank != null && <span className="ml-1">· CSS #{pick.css_rank}</span>}
-                          {pick.points_per_game != null && <span className="ml-1">· {pick.points_per_game.toFixed(2)} PPG</span>}
-                        </div>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {roundPicks.map((pick) => {
+                          const colors = getTeamColors(pick.abbreviation)
+                          const posColor = POSITION_COLORS[pick.position ?? ''] ?? '#8892a4'
+                          const idx = globalIdx++
+                          return (
+                            <motion.div
+                              key={pick.pick}
+                              initial={{ opacity: 0, y: 8 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: Math.min(idx * 0.01, 0.5) }}
+                              className="flex items-center gap-3 px-3 py-2.5 rounded-lg bg-bg-card border border-border-subtle"
+                              style={{ borderLeft: `3px solid ${colors.primary}` }}
+                            >
+                              <span className="text-base font-black text-white w-7 text-right flex-shrink-0">
+                                {pick.pick_in_round ?? pick.pick}
+                              </span>
+                              <div
+                                className="w-8 h-8 rounded flex items-center justify-center flex-shrink-0"
+                                style={{ backgroundColor: colors.primary + '22' }}
+                              >
+                                <img
+                                  src={getTeamLogo(pick.abbreviation)}
+                                  alt={pick.abbreviation}
+                                  className="w-6 h-6 object-contain"
+                                  onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                                />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="text-white font-semibold text-sm truncate">
+                                  {pick.prospect_name}
+                                </div>
+                                <div className="text-text-muted text-xs truncate">
+                                  {pick.team_name}
+                                  {pick.css_rank != null && <span className="ml-1">· CSS #{pick.css_rank}</span>}
+                                  {pick.points_per_game != null && <span className="ml-1">· {pick.points_per_game.toFixed(2)} PPG</span>}
+                                </div>
+                              </div>
+                              {pick.position && (
+                                <span
+                                  className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+                                  style={{ color: posColor, background: posColor + '22' }}
+                                >
+                                  {pick.position}
+                                </span>
+                              )}
+                            </motion.div>
+                          )
+                        })}
                       </div>
-                      {pick.position && (
-                        <span
-                          className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0"
-                          style={{ color: posColor, background: posColor + '22' }}
-                        >
-                          {pick.position}
-                        </span>
-                      )}
-                    </motion.div>
-                  )
-                })}
-              </motion.div>
-            )}
+                    </div>
+                  ))}
+                </motion.div>
+              )
+            })()}
           </AnimatePresence>
         </div>
       </div>

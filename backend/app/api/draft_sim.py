@@ -72,12 +72,20 @@ class SimulateDraftRequest(BaseModel):
     lottery_result: list[int]   # ordered team_ids (picks 1-32)
     seed: Optional[int] = None
     temperature: float = DEFAULT_TEMPERATURE  # controls pick randomness
+    num_rounds: int = 7  # how many rounds to simulate (1-7)
 
     @field_validator("temperature")
     @classmethod
     def temperature_non_negative(cls, v: float) -> float:
         if v < 0:
             raise ValueError("temperature must be >= 0 (use 0 for deterministic argmax)")
+        return v
+
+    @field_validator("num_rounds")
+    @classmethod
+    def rounds_in_range(cls, v: int) -> int:
+        if not 1 <= v <= 7:
+            raise ValueError("num_rounds must be between 1 and 7")
         return v
 
 
@@ -130,6 +138,11 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
     seed = body.seed if body.seed is not None else random.randint(0, 2**31)
     rng  = random.Random(seed)
 
+    # Expand pick order to multiple rounds: round 1 uses lottery order,
+    # subsequent rounds repeat in the same order (simplified — no trades).
+    round1_order = body.lottery_result
+    full_pick_order = round1_order * body.num_rounds
+
     from app.observability.metrics import (
         SIMULATIONS_TOTAL, SIMULATION_DURATION, CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL,
     )
@@ -179,7 +192,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
     available = list(prospects)
     picks = []
 
-    for pick_num, team_id in enumerate(body.lottery_result, 1):
+    for pick_num, team_id in enumerate(full_pick_order, 1):
         if not available:
             break
         team = teams_map.get(team_id)
@@ -205,7 +218,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
             cal_intervals = apply_intervals(scores, registry.calibration, alpha=0.10)
 
         effective_temp = _pick_temperature(
-            body.temperature, pick_num, available, scores, len(body.lottery_result)
+            body.temperature, pick_num, available, scores, len(full_pick_order)
         )
         chosen = _sample_pick(available, scores, rng, effective_temp)
 
@@ -215,8 +228,11 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
 
         available = [p for p in available if p.id != chosen.id]
 
+        pick_round = (pick_num - 1) // len(round1_order) + 1
         pick_data = {
             "pick":            pick_num,
+            "round":           pick_round,
+            "pick_in_round":   (pick_num - 1) % len(round1_order) + 1,
             "team_id":         team_id,
             "team_name":       getattr(team, "full_name", team.abbreviation),
             "abbreviation":    team.abbreviation,

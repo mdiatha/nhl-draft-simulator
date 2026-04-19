@@ -1,29 +1,44 @@
 version: "3.9"
 
-# Production compose — DB is managed by RDS, not Docker.
-# Runs only the FastAPI backend + Ollama on EC2.
+# Production compose - all services on a single t3.small EC2 instance.
+# Environment variables are loaded from /home/ec2-user/.env (written at boot
+# by user-data from SSM Parameter Store).
 #
-# Required environment variables (set in /home/ec2-user/.env):
-#   AWS_SECRETS_NAME  — Secrets Manager secret name (nhl-draft/production)
-#   AWS_S3_BUCKET     — S3 bucket for model artifacts
-#   AWS_REGION        — AWS region (e.g. us-east-1)
-#   APP_ENV           — set to "production"
-#
-# DATABASE_URL is loaded from Secrets Manager at startup by backend/app/aws/secrets.py.
-# API keys (Anthropic, Secret Key, Admin Key) are loaded from SSM Parameter Store.
-#
-# NOTE: Ollama (nomic-embed-text) requires ~500MB RAM. On a t3.micro (1GB total)
-# this is tight — consider upgrading to t3.small (2GB) for comfortable headroom.
-# On first deploy, pull the model:
-#   docker compose -f docker-compose.prod.yml exec ollama ollama pull nomic-embed-text
+# Deploy: push image to ECR, then on the instance run:
+#   docker compose pull && docker compose up -d
 
 services:
+  db:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: nhl
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: nhl_draft
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nhl -d nhl_draft"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
     volumes:
       - ollama_data:/root/.ollama
-    # Keep Ollama internal — not exposed to the host in prod.
     deploy:
       resources:
         limits:
@@ -36,26 +51,29 @@ services:
       start_period: 30s
 
   api:
-    image: ${ECR_REGISTRY}/nhl-draft-api:${IMAGE_TAG:-latest}
+    image: ${ECR_REGISTRY:-676022791412.dkr.ecr.us-east-1.amazonaws.com}/nhl-draft-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
       - /home/ec2-user/.env
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
+      DATABASE_URL: postgresql+psycopg2://nhl:${DB_PASSWORD}@db:5432/nhl_draft
+      REDIS_URL: redis://redis:6379/0
     ports:
-      - "8000:8000"
+      - "80:8000"
     depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
       ollama:
         condition: service_healthy
-    # Single Uvicorn worker — t3.micro has 1 vCPU.
-    # Async I/O handles concurrent SSE streams (Claude agent, draft summaries)
-    # without blocking. No Redis pub/sub fan-out needed with a single process.
     command: >
-      uvicorn app.main:app
+      sh -c "alembic upgrade head && uvicorn app.main:app
       --host 0.0.0.0
       --port 8000
       --timeout-keep-alive 120
-      --log-level info
+      --log-level info"
     logging:
       driver: "json-file"
       options:
@@ -63,4 +81,6 @@ services:
         max-file: "3"
 
 volumes:
+  postgres_data:
+  redis_data:
   ollama_data:

@@ -235,6 +235,10 @@ export class NhlDraftStack extends cdk.Stack {
       actions: ['ssm:SendCommand', 'ssm:GetCommandInvocation'],
       resources: ['*'],
     }));
+    githubActionsRole.addToPolicy(new iam.PolicyStatement({
+      actions: ['lambda:UpdateFunctionCode'],
+      resources: [`arn:aws:lambda:${this.region}:${this.account}:function:${prefix}-ingestion-trigger`],
+    }));
 
     // ---- Budget alert --------------------------------------------------------
     const alertTopic = new sns.Topic(this, 'AlertTopic', { displayName: `${prefix}-alerts` });

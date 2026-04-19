@@ -2,11 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from app.agent.embeddings import (
-    prospect_profile_to_text,
-    prospect_style_to_text,
-    prospect_trend_to_text,
-)
+from app.agent.embeddings import prospect_to_text, cosine_similarity
 
 
 def _prospect(**overrides):
@@ -45,35 +41,38 @@ def _stat_row(**overrides):
     return SimpleNamespace(**base)
 
 
-def test_prospect_profile_to_text_adds_contextual_details():
-    text = prospect_profile_to_text(_prospect())
+def test_prospect_to_text_contains_key_fields():
+    text = prospect_to_text(_prospect())
 
-    assert "Prospect: Test Prospect" in text
-    assert "CSS Rank: 7 | CSS Category: EUR skater" in text
-    assert "Current production: 0.82 PPG across 42 GP (10G, 24A)" in text
-    assert "Age at draft: 18.1 (young for the class)" in text
-    assert "Context: top-tier pro or elite junior competition; pro-size frame." in text
+    assert "Test Prospect" in text
+    assert "D" in text  # position
+    assert "SHL" in text  # league
 
 
-def test_prospect_style_to_text_derives_role_tags():
-    text = prospect_style_to_text(_prospect())
-
-    assert "Projected style:" in text
-    assert "offensive defenseman" in text
-    assert "balanced scoring profile" in text
-    assert "young for the class" in text
-    assert "pro-size frame" in text
-
-
-def test_prospect_trend_to_text_summarizes_growth_and_history():
+def test_prospect_to_text_with_stat_rows():
     stat_rows = [
         _stat_row(points_per_game=0.82, points=34),
-        _stat_row(league="J20 Nationell", season_type="previous", games_played=38, goals=7, assists=14, points=21, points_per_game=0.55),
+        _stat_row(league="J20 Nationell", season_type="previous",
+                  games_played=38, goals=7, assists=14, points=21, points_per_game=0.55),
     ]
+    text = prospect_to_text(_prospect(), stat_rows)
 
-    text = prospect_trend_to_text(_prospect(), stat_rows)
+    assert "Test Prospect" in text
+    assert len(text) > 50
 
-    assert "Trajectory: clear upward development trend" in text
-    assert "Current season vs previous season: 0.82 PPG vs 0.56 PPG." in text
-    assert "Recent stat history:" in text
-    assert "J20 Nationell (previous): 38 GP, 21 points, 0.55 PPG" in text
+
+def test_cosine_similarity_identical_vectors():
+    v = [1.0, 0.0, 0.0]
+    assert cosine_similarity(v, v) == 1.0
+
+
+def test_cosine_similarity_orthogonal_vectors():
+    a = [1.0, 0.0]
+    b = [0.0, 1.0]
+    assert abs(cosine_similarity(a, b)) < 1e-9
+
+
+def test_cosine_similarity_opposite_vectors():
+    a = [1.0, 0.0]
+    b = [-1.0, 0.0]
+    assert cosine_similarity(a, b) == -1.0

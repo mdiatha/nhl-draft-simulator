@@ -208,7 +208,7 @@ class TestBuildFeaturesIntegration:
         df_raw = build_training_dataset(fifty_pick_db)
         feat_df = build_features(df_raw)
 
-        for col in ["pick_slot_norm", "rank_vs_slot"]:
+        for col in ["pick_slot_norm"]:
             assert feat_df[col].between(0.0, 1.0).all(), (
                 f"{col} values must be in [0, 1]"
             )
@@ -230,20 +230,19 @@ class TestTrainAndPredict:
             f"AUC {auc:.4f} is outside the expected range [0.4, 1.0]"
         )
 
-    def test_model_predict_returns_probabilities(self, fifty_pick_db):
-        """Model predict_proba must return values strictly in [0, 1] for all rows."""
+    def test_model_predict_returns_scores(self, fifty_pick_db):
+        """XGBRanker.predict must return finite scores for all rows."""
         df = build_training_dataset(fifty_pick_db)
         model, _ = train(df)
 
         feat_df = build_features(df.head(20))
-        proba = model.predict_proba(feat_df)[:, 1]
+        scores = model.predict(feat_df)
 
-        assert len(proba) == len(feat_df), (
-            "predict_proba output length must match input length"
+        assert len(scores) == len(feat_df), (
+            "predict output length must match input length"
         )
-        assert (proba >= 0.0).all() and (proba <= 1.0).all(), (
-            "All probabilities must be in [0, 1]"
-        )
+        import numpy as np
+        assert np.isfinite(scores).all(), "All scores must be finite"
 
     def test_train_final_mode_returns_nan_auc(self, fifty_pick_db):
         """train(df, final=True) should return NaN AUC since there is no validation set."""

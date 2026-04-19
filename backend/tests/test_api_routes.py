@@ -76,7 +76,7 @@ class TestProbes:
         mock_registry.meta = {"trained_at": "2026-01-01", "validation_auc": "0.82"}
 
         with patch("app.main.get_db", return_value=iter([mock_db])), \
-             patch("app.main.registry", mock_registry):
+             patch("app.ml.registry.registry", mock_registry):
             response = client.get("/readyz")
         # DB mock may or may not propagate perfectly through DI; just assert no 500
         assert response.status_code in (200, 503)

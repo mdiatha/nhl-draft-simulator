@@ -176,19 +176,26 @@ jobs:
         run: npm ci
 
       - name: Configure AWS credentials
+        id: aws-creds
+        continue-on-error: true
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
       - name: CDK diff
+        if: steps.aws-creds.outcome == 'success'
         run: |
           npx cdk diff \
             --context environment=production \
             --context githubOrg="${{ github.repository_owner }}" \
             --context githubRepo="${{ github.event.repository.name }}" \
             --context alertEmail="${{ secrets.ALERT_EMAIL }}" \
-            2>&1 || true  # diff exits non-zero when changes exist - that's OK in CI
+            2>&1 || true
+
+      - name: Skip diff (no AWS credentials configured)
+        if: steps.aws-creds.outcome != 'success'
+        run: echo "AWS credentials not configured — skipping CDK diff"
 
   # - Docker build + push -
   # On PRs: build only (validates the Dockerfile).

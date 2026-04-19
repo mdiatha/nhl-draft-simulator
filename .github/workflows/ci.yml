@@ -7,7 +7,7 @@ on:
     branches: [main]
 
 jobs:
-  # ── Backend unit tests ────────────────────────────────────────────────────────
+  # - Backend unit tests -
   backend:
     name: Backend (Python)
     runs-on: ubuntu-latest
@@ -47,7 +47,7 @@ jobs:
           name: coverage-report
           path: backend/coverage.xml
 
-  # ── Integration tests (testcontainers — requires Docker) ─────────────────────
+  # - Integration tests (testcontainers - requires Docker) -
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
@@ -67,8 +67,8 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Run integration tests
-        # TESTCONTAINERS_POSTGRES_IMAGE must be pgvector/pgvector:pg16 — NOT
-        # postgres:16-alpine — because migration 011 requires the pgvector extension.
+        # TESTCONTAINERS_POSTGRES_IMAGE must be pgvector/pgvector:pg16 - NOT
+        # postgres:16-alpine - because migration 011 requires the pgvector extension.
         env:
           TESTCONTAINERS_POSTGRES_IMAGE: pgvector/pgvector:pg16
         run: |
@@ -84,7 +84,7 @@ jobs:
           name: coverage-integration
           path: backend/coverage_integration.xml
 
-  # ── Alembic migrations ────────────────────────────────────────────────────────
+  # - Alembic migrations -
   migrations:
     name: Alembic migration check
     runs-on: ubuntu-latest
@@ -94,7 +94,7 @@ jobs:
 
     services:
       postgres:
-        # Must use pgvector image — postgres:16-alpine lacks the pgvector extension
+        # Must use pgvector image - postgres:16-alpine lacks the pgvector extension
         # required by migration 011 (vector(1024) column on scout_embeddings).
         image: pgvector/pgvector:pg16
         env:
@@ -124,7 +124,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg2://nhl:nhl_password@localhost:5432/nhl_draft_ci
         run: alembic upgrade head
 
-  # ── CDK synth (no AWS credentials needed) ────────────────────────────────────
+  # - CDK synth (no AWS credentials needed) -
   cdk-synth:
     name: CDK synth
     runs-on: ubuntu-latest
@@ -147,10 +147,10 @@ jobs:
       - name: TypeScript type-check
         run: npx tsc --noEmit
 
-      - name: CDK synth (no AWS credentials — validates CloudFormation output)
+      - name: CDK synth (no AWS credentials - validates CloudFormation output)
         run: npx cdk synth --context environment=production 2>&1
 
-  # ── CDK diff (requires AWS credentials — PR + main push only) ────────────────
+  # - CDK diff (requires AWS credentials - PR + main push only) -
   cdk-diff:
     name: CDK diff
     runs-on: ubuntu-latest
@@ -188,9 +188,9 @@ jobs:
             --context githubOrg="${{ github.repository_owner }}" \
             --context githubRepo="${{ github.event.repository.name }}" \
             --context alertEmail="${{ secrets.ALERT_EMAIL }}" \
-            2>&1 || true  # diff exits non-zero when changes exist — that's OK in CI
+            2>&1 || true  # diff exits non-zero when changes exist - that's OK in CI
 
-  # ── Docker build + push ───────────────────────────────────────────────────────
+  # - Docker build + push -
   # On PRs: build only (validates the Dockerfile).
   # On main: build AND push to ECR so the deploy job can pull without rebuilding.
   docker:
@@ -210,7 +210,7 @@ jobs:
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          # OIDC — short-lived credentials, no long-lived AWS keys stored as secrets.
+          # OIDC - short-lived credentials, no long-lived AWS keys stored as secrets.
           role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ secrets.AWS_REGION }}
 
@@ -231,7 +231,7 @@ jobs:
           docker push $ECR_REGISTRY/nhl-draft-api:${{ github.sha }}
           docker push $ECR_REGISTRY/nhl-draft-api:latest
 
-  # ── Deploy to ECS (main branch only) ────────────────────────────────────────
+  # - Deploy to ECS (main branch only) -
   deploy:
     name: Deploy to ECS
     runs-on: ubuntu-latest
@@ -311,7 +311,7 @@ jobs:
           curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/readyz" > /dev/null
           curl -fsSL --retry 5 --retry-delay 5 "$API_BASE_URL/api/ml/status" > /dev/null
 
-  # ── Deploy frontend to S3 + CloudFront invalidation ──────────────────────────
+  # - Deploy frontend to S3 + CloudFront invalidation -
   deploy-frontend:
     name: Deploy frontend
     runs-on: ubuntu-latest
@@ -352,12 +352,12 @@ jobs:
 
       - name: Sync to S3
         run: |
-          # Hashed assets (JS/CSS) are immutable — cache aggressively
+          # Hashed assets (JS/CSS) are immutable - cache aggressively
           aws s3 sync frontend/dist/ s3://${{ secrets.FRONTEND_S3_BUCKET }}/ \
             --delete \
             --cache-control "public,max-age=31536000,immutable" \
             --exclude "index.html"
-          # index.html must not be cached — it references hashed assets
+          # index.html must not be cached - it references hashed assets
           aws s3 cp frontend/dist/index.html s3://${{ secrets.FRONTEND_S3_BUCKET }}/index.html \
             --cache-control "no-cache,no-store,must-revalidate"
 
@@ -374,7 +374,7 @@ jobs:
         run: |
           curl -fsSL --retry 5 --retry-delay 5 "$FRONTEND_URL" | grep -qi "<!doctype html"
 
-  # ── Update Lambda function code (main branch only) ────────────────────────────
+  # - Update Lambda function code (main branch only) -
   deploy-lambda:
     name: Deploy ingestion Lambda
     runs-on: ubuntu-latest

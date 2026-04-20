@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { draftApi, standingsApi, buildApiUrl } from '../lib/api'
+import { draftApi, standingsApi } from '../lib/api'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
 import { DRAFT_YEAR } from '../lib/config'
 import type { DraftSimulationPick } from '../types'

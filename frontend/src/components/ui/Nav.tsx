@@ -2,7 +2,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { clsx } from 'clsx'
 
 const links = [
-  { to: '/lottery', label: 'Lottery' },
+  { to: '/', label: 'Lottery' },
   { to: '/scenario', label: 'What-If' },
   { to: '/prospects', label: 'Prospects' },
 ]
@@ -22,7 +22,7 @@ export default function Nav() {
               to={link.to}
               className={clsx(
                 'px-3 py-1.5 rounded text-sm font-medium transition-colors',
-                location.pathname === link.to
+                (link.to === '/' ? location.pathname === '/' : location.pathname.startsWith(link.to))
                   ? 'bg-accent-blue/20 text-accent-blue'
                   : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
               )}

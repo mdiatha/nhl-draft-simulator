@@ -1,10 +1,9 @@
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import { Suspense, lazy } from 'react'
 import Nav from './components/ui/Nav'
 import ErrorBoundary from './components/ui/ErrorBoundary'
 import ScoutWidget from './components/scout/ScoutWidget'
 
-const HomePage = lazy(() => import('./pages/HomePage'))
 const LotteryPage = lazy(() => import('./pages/LotteryPage'))
 const DraftPage = lazy(() => import('./pages/DraftPage'))
 const TeamPage = lazy(() => import('./pages/TeamPage'))
@@ -27,8 +26,8 @@ export default function App() {
         <Nav />
         <Suspense fallback={<PageLoader />}>
           <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/lottery" element={<LotteryPage />} />
+            <Route path="/" element={<LotteryPage />} />
+            <Route path="/lottery" element={<Navigate to="/" replace />} />
             <Route path="/draft" element={<DraftPage />} />
             <Route path="/teams/:teamId" element={<TeamPage />} />
             <Route path="/prospects" element={<ProspectsPage />} />

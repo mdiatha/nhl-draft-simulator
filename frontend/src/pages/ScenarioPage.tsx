@@ -33,24 +33,14 @@ export default function ScenarioPage() {
   async function loadTeams() {
     setLoadingTeams(true)
     try {
-      // Prefer lottery odds (historical / seeded), fall back to live standings
-      const oddsRes = await fetch(buildApiUrl('/api/lottery/odds'))
-      const oddsData: { teams?: { team_id: number; team_name: string; abbreviation: string }[] } = await oddsRes.json()
-      if (oddsData.teams && oddsData.teams.length > 0) {
-        setTeams(oddsData.teams.map(t => ({
-          team_id: t.team_id,
-          team_name: t.team_name,
-          abbreviation: t.abbreviation,
-        })))
-        return
-      }
-
-      // Fallback: live standings, sorted worst-first (lottery order)
+      // Load all 32 teams from live standings: lottery teams first (worst→best), then playoff teams
       const liveData = await standingsApi.getLive()
-      const live: { nhl_id: number; team_name: string; abbreviation: string; points: number; row: number }[] = liveData?.standings ?? []
-      const sorted = [...live].sort((a, b) => a.points - b.points || a.row - b.row)
+      const live: { team_id: number; team_name: string; abbreviation: string; points: number; row: number; in_playoffs: boolean }[] = liveData?.standings ?? []
+      const lottery = [...live].filter(t => !t.in_playoffs).sort((a, b) => a.points - b.points || a.row - b.row)
+      const playoff = [...live].filter(t => t.in_playoffs).sort((a, b) => a.points - b.points || a.row - b.row)
+      const sorted = [...lottery, ...playoff]
       setTeams(sorted.map(t => ({
-        team_id: t.nhl_id,
+        team_id: t.team_id,
         team_name: t.team_name,
         abbreviation: t.abbreviation,
       })))

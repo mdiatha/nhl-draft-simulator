@@ -163,12 +163,6 @@ export default function DraftPage() {
         </div>
         <div className="flex gap-2">
           <button
-            onClick={copyShareUrl}
-            className="px-4 py-2 text-sm bg-bg-card border border-border-default rounded-lg text-text-secondary hover:text-white hover:border-accent-blue transition-colors"
-          >
-            Share
-          </button>
-          <button
             onClick={() => simulateDraft(picks.length > 0)}
             disabled={isSimulating}
             className="px-4 py-2 text-sm bg-accent-blue hover:bg-blue-500 text-white font-semibold rounded-lg transition-colors disabled:opacity-50"

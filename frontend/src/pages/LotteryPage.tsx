@@ -160,31 +160,6 @@ export default function LotteryPage() {
             />
           )}
 
-          {/* Post-draw: show top 3 lottery winners */}
-          {completed && lotteryOrder.length > 0 && (
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="bg-bg-card border border-accent-blue/30 rounded-xl p-4"
-            >
-              <p className="text-xs text-accent-blue font-semibold uppercase tracking-wide mb-3">
-                Lottery Results — Top 3 Picks
-              </p>
-              <div className="space-y-2">
-                {lotteryOrder.slice(0, 3).map((team, i) => {
-                  const colors = getTeamColors(team.abbreviation)
-                  return (
-                    <div key={team.abbreviation} className="flex items-center gap-3 p-2 rounded-lg bg-bg-secondary" style={{ borderLeft: `3px solid ${colors.primary}` }}>
-                      <span className="text-lg font-black text-white w-6">#{i + 1}</span>
-                      <img src={getTeamLogo(team.abbreviation)} alt={team.abbreviation} className="w-7 h-7 object-contain" onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }} />
-                      <span className="text-white font-semibold text-sm flex-1">{team.team_name}</span>
-                      <span className="text-text-muted text-xs">{team.wins}-{team.losses}-{team.otl} · {team.points}pts</span>
-                    </div>
-                  )
-                })}
-              </div>
-            </motion.div>
-          )}
         </div>
 
         {/* Live standings sidebar */}

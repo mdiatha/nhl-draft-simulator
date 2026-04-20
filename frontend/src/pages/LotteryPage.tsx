@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
 import { standingsApi } from '../lib/api'
 import LotteryDraw from '../components/lottery/LotteryDraw'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
@@ -42,7 +41,6 @@ export default function LotteryPage() {
   const [completed, setCompleted] = useState(false)
   const [sortBy, setSortBy] = useState<SortKey>('points')
   const [showPlayoffs, setShowPlayoffs] = useState(true)
-  const [lotteryOrder, setLotteryOrder] = useState<LiveTeam[]>([])
 
   const { data, isLoading, error, dataUpdatedAt } = useQuery({
     queryKey: ['standings-live'],
@@ -90,18 +88,11 @@ export default function LotteryPage() {
   function handleReset() {
     reset()
     setCompleted(false)
-    setLotteryOrder([])
     setResetKey(k => k + 1)
   }
 
   function handleComplete(result: LotteryPick[], completedSeed: number) {
     setCompleted(true)
-    // Map lottery result back to LiveTeam order for display
-    const byAbbrev = Object.fromEntries(allTeams.map(t => [t.abbreviation, t]))
-    const ordered = result
-      .map(p => byAbbrev[p.abbreviation])
-      .filter(Boolean) as LiveTeam[]
-    setLotteryOrder(ordered)
 
     // Push lottery result into draft store so DraftPage can pick it up
     setLotteryResult(result, completedSeed)

@@ -125,19 +125,6 @@ export default function DraftPage() {
     }
   }
 
-  function copyShareUrl() {
-    const seed = activeSeed ?? Math.floor(Math.random() * 99999)
-    const lotteryOrderIds = lotteryResult.length > 0
-      ? lotteryResult.map(p => p.team_id)
-      : sharedOrderIds
-    const params = new URLSearchParams()
-    params.set('seed', String(seed))
-    if (lotteryOrderIds.length > 0) {
-      params.set('order', lotteryOrderIds.join(','))
-    }
-    const url = `${window.location.origin}/draft?${params.toString()}`
-    navigator.clipboard.writeText(url)
-  }
 
   if (lotteryResult.length === 0 && !seedParam && sharedOrderIds.length === 0) {
     return (

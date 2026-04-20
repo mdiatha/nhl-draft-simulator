@@ -19,11 +19,13 @@ import time
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from sqlalchemy.orm import Session
 
 from app.constants import LOTTERY_ODDS
-from app.database import get_redis
+from app.database import get_db, get_redis
+from app.models import Team
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/standings", tags=["standings"])
@@ -143,7 +145,7 @@ def _build_standings_payload(raw: list[dict]) -> dict:
 
 
 @router.get("/live")
-async def live_standings():
+async def live_standings(db: Session = Depends(get_db)):
     """
     Return current NHL standings with live lottery odds.
 
@@ -155,7 +157,8 @@ async def live_standings():
       abbreviation, team_name, conference, division,
       wins, losses, otl, games_played, points, row,
       overall_rank, in_playoffs,
-      lottery_slot (1-16 or null), lottery_odds_pct
+      lottery_slot (1-16 or null), lottery_odds_pct,
+      team_id (DB primary key, for lottery simulate)
     """
     cache_key = "standings:live"
     if _REDIS_OK and _redis:
@@ -170,6 +173,15 @@ async def live_standings():
         raise HTTPException(status_code=502, detail="Could not reach NHL API. Try again shortly.")
 
     payload = _build_standings_payload(raw)
+
+    # Enrich each team with the DB primary key (team.id) matched by abbreviation.
+    # The frontend needs this to pass team_id to the lottery simulate endpoint.
+    db_teams: dict[str, int] = {
+        t.abbreviation: t.id
+        for t in db.query(Team.abbreviation, Team.id).all()
+    }
+    for team in payload["standings"]:
+        team["team_id"] = db_teams.get(team["abbreviation"])
 
     if _REDIS_OK and _redis:
         _redis.setex(cache_key, CACHE_TTL, json.dumps(payload))

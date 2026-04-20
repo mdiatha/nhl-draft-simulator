@@ -11,7 +11,7 @@ import { DRAFT_YEAR } from '../lib/config'
 import type { LotteryPick, LotterySimulationTeam } from '../types'
 
 interface LiveTeam {
-  nhl_id: number
+  team_id: number | null
   abbreviation: string
   team_name: string
   conference: string
@@ -73,7 +73,7 @@ export default function LotteryPage() {
   })()
 
   const liveSimulationTeams: LotterySimulationTeam[] = allTeams.map(team => ({
-    team_id: team.nhl_id,
+    team_id: team.team_id ?? 0,
     team_name: team.team_name,
     abbreviation: team.abbreviation,
     odds_pct: team.lottery_odds_pct,

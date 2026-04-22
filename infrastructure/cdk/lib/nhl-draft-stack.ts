@@ -62,14 +62,28 @@ export class NhlDraftStack extends cdk.Stack {
     dbPasswordParam.grantRead(instanceRole);
 
     // ---- VPC (default VPC — looked up at deploy time via context) ----------------
-    // fromLookup requires account+region; in CI without credentials we use a dummy
-    // VPC attribute set so cdk synth succeeds for validation.
+    // cdk synth in CI runs without AWS credentials, so we use fromVpcAttributes
+    // with placeholder IDs so synth succeeds for CloudFormation validation.
+    // At actual deploy time you MUST supply the real values via CDK context:
+    //   npx cdk deploy --context vpcId=vpc-XXXXXXXX \
+    //                  --context subnetId1=subnet-XXXXXXXX \
+    //                  --context subnetId2=subnet-YYYYYYYY
+    // Without these, CloudFormation will fail with "VPC vpc-00000000 does not exist".
+    const vpcId = this.node.tryGetContext('vpcId');
+    const subnetId1 = this.node.tryGetContext('subnetId1');
+    const subnetId2 = this.node.tryGetContext('subnetId2');
+    if (!vpcId && !this.node.tryGetContext('ci')) {
+      throw new Error(
+        'CDK context "vpcId" is required for deployment. ' +
+        'Run: npx cdk deploy --context vpcId=vpc-XXXX --context subnetId1=subnet-XXXX --context subnetId2=subnet-YYYY',
+      );
+    }
     const vpc = ec2.Vpc.fromVpcAttributes(this, 'DefaultVpc', {
-      vpcId: this.node.tryGetContext('vpcId') ?? 'vpc-00000000',
+      vpcId: vpcId ?? 'vpc-00000000',
       availabilityZones: [this.region + 'a', this.region + 'b'],
       publicSubnetIds: [
-        this.node.tryGetContext('subnetId1') ?? 'subnet-00000001',
-        this.node.tryGetContext('subnetId2') ?? 'subnet-00000002',
+        subnetId1 ?? 'subnet-00000001',
+        subnetId2 ?? 'subnet-00000002',
       ],
     });
 
@@ -129,6 +143,12 @@ export class NhlDraftStack extends cdk.Stack {
       `aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REGISTRY`,
       `cd /home/ec2-user`,
       `docker compose up -d --pull always 2>&1 | tee /var/log/docker-compose-boot.log`,
+      '',
+      '# Pull Ollama embedding model (nomic-embed-text) once into the named volume.',
+      '# This blocks until the model is ready so the API can serve embedding requests',
+      '# immediately. On subsequent boots the model is cached in the ollama_data volume.',
+      `timeout 300 bash -c 'until docker compose exec -T ollama ollama list > /dev/null 2>&1; do sleep 5; done'`,
+      `docker compose exec -T ollama ollama pull nomic-embed-text 2>&1 | tee /var/log/ollama-pull.log`,
     );
 
     // ---- EC2 instance ---------------------------------------------------------
@@ -166,10 +186,32 @@ export class NhlDraftStack extends cdk.Stack {
     cdk.Tags.of(frontendBucket).add('Name', `${prefix}-frontend`);
 
     // ---- CloudFront ----------------------------------------------------------
-    // CloudFront requires a domain name (not raw IP) as origin.
-    // The EC2 DNS is derived from the Elastic IP (54.174.178.24 -> ec2-54-174-178-24.compute-1.amazonaws.com).
-    // If the EIP changes, update this value accordingly.
-    const ec2ApiDns: string = ctx('ec2ApiDns') ?? 'ec2-54-174-178-24.compute-1.amazonaws.com';
+    // CloudFront requires a domain name (not a raw IP) as origin.
+    // We derive the public DNS hostname from the EIP using the standard AWS
+    // EC2 public-DNS convention so it stays in sync whenever the EIP changes.
+    // Format: ec2-<ip-dashes>.<region>.compute.amazonaws.com
+    // (us-east-1 uses the legacy compute-1.amazonaws.com form)
+    const eipIp = eip.attrPublicIp;
+    const ec2ApiDns = cdk.Fn.conditionIf(
+      new cdk.CfnCondition(this, 'IsUsEast1', {
+        expression: cdk.Fn.conditionEquals(this.region, 'us-east-1'),
+      }).logicalId,
+      // us-east-1 legacy hostname format
+      cdk.Fn.join('', [
+        'ec2-',
+        cdk.Fn.join('-', cdk.Fn.split('.', eipIp)),
+        '.compute-1.amazonaws.com',
+      ]),
+      // All other regions
+      cdk.Fn.join('', [
+        'ec2-',
+        cdk.Fn.join('-', cdk.Fn.split('.', eipIp)),
+        '.',
+        this.region,
+        '.compute.amazonaws.com',
+      ]),
+    ).toString();
+
     const apiOrigin = new cloudfront_origins.HttpOrigin(ec2ApiDns, {
       protocolPolicy: cloudfront.OriginProtocolPolicy.HTTP_ONLY,
       httpPort: 80,

@@ -6,7 +6,6 @@ import { useDraftStore } from '../stores/draftStore'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
 import { DRAFT_YEAR } from '../lib/config'
 import type { DraftSimulationPick, LotteryPick } from '../types/index'
-import ShapDrawer from '../components/ui/ShapDrawer'
 
 function getConfidenceBadge(pick: DraftSimulationPick): { label: string; className: string } | null {
   if (pick.in_prediction_set === false) {
@@ -146,7 +145,6 @@ export default function DraftPage() {
       <div className="flex items-center justify-between mb-6 flex-wrap gap-3">
         <div>
           <h1 className="text-3xl font-bold text-white">{DRAFT_YEAR} Draft Board</h1>
-          {activeSeed && <p className="text-text-secondary text-sm mt-1">Seed: {activeSeed}</p>}
         </div>
         <div className="flex gap-2">
           <button
@@ -265,7 +263,7 @@ export default function DraftPage() {
                           onClick={() => navigate(`/teams/${pick.team_id}`)}
                         >
                           <div className="text-right flex-shrink-0 w-8">
-                            <div className="text-base font-black text-white leading-tight">{pick.pick_in_round ?? pick.pick}</div>
+                            <div className="text-base font-black text-white leading-tight">{pick.pick}</div>
                           </div>
                           <div
                             className="w-9 h-9 rounded flex items-center justify-center flex-shrink-0 overflow-hidden"
@@ -300,13 +298,6 @@ export default function DraftPage() {
                             </span>
                           )}
                         </div>
-                        {pick.prospect_id && roundNum === 1 && (
-                          <ShapDrawer
-                            prospectId={pick.prospect_id}
-                            teamId={pick.team_id}
-                            pickNumber={pick.pick}
-                          />
-                        )}
                       </motion.div>
                     )
                   })}

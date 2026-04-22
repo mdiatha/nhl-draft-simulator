@@ -4,12 +4,15 @@ import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as events_targets from 'aws-cdk-lib/aws-events-targets';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as path from 'path';
 import { Construct } from 'constructs';
 
 export interface IngestionConstructProps {
   prefix: string;
   apiEndpoint: string;
+  adminApiKeyParam: ssm.IStringParameter;
 }
 
 /**
@@ -22,7 +25,7 @@ export class IngestionConstruct extends Construct {
 
   constructor(scope: Construct, id: string, props: IngestionConstructProps) {
     super(scope, id);
-    const { prefix, apiEndpoint } = props;
+    const { prefix, apiEndpoint, adminApiKeyParam } = props;
 
     const logGroup = new logs.LogGroup(this, 'LambdaLogGroup', {
       logGroupName: `/aws/lambda/${prefix}-ingestion-trigger`,
@@ -51,9 +54,10 @@ export class IngestionConstruct extends Construct {
       timeout: cdk.Duration.seconds(60),
       environment: {
         API_BASE_URL: apiEndpoint,
-        // Value comes from CDK context (cdk.json or --context adminApiKey=...).
-        // Must be overridden post-deploy if left as placeholder.
-        ADMIN_API_KEY: this.node.tryGetContext('adminApiKey') ?? 'placeholder',
+        // ADMIN_API_KEY_PARAM holds the SSM parameter name; the handler reads
+        // the actual secret value at invocation time via boto3 so it is never
+        // baked into the function configuration.
+        ADMIN_API_KEY_PARAM: adminApiKeyParam.parameterName,
       },
       deadLetterQueue: dlq,
       logGroup,
@@ -62,6 +66,9 @@ export class IngestionConstruct extends Construct {
 
     // DLQ send permission for Lambda's execution role
     dlq.grantSendMessages(this.lambdaFunction);
+
+    // Allow Lambda to read the admin API key from SSM at invocation time
+    adminApiKeyParam.grantRead(this.lambdaFunction);
 
     // EventBridge daily cron - 06:00 UTC
     const rule = new events.Rule(this, 'DailyIngestionRule', {

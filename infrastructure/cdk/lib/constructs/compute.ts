@@ -234,7 +234,7 @@ export class ComputeConstruct extends Construct {
       securityGroups: [rdsSecurityGroup],
       publiclyAccessible: false,
       multiAz: false, // single-AZ saves ~$15/mo
-      backupRetention: cdk.Duration.days(0), // 0 = disabled; free-tier accounts cap at 0
+      backupRetention: cdk.Duration.days(7),
       preferredBackupWindow: '03:00-04:00',
       preferredMaintenanceWindow: 'Mon:04:00-Mon:05:00',
       deletionProtection: false,

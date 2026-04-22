@@ -156,7 +156,9 @@ export class IamConstruct extends Construct {
         resources: [ecsTaskRole.roleArn, ecsTaskExecutionRole.roleArn],
       }),
     );
-    // CDK deploy permissions - allows GitHub Actions to call cdk deploy
+    // CDK deploy permissions - allows GitHub Actions to call cdk deploy.
+    // DeleteStack is intentionally omitted: a merged commit should never be
+    // able to destroy production infrastructure.
     this.githubActionsRole.addToPolicy(
       new iam.PolicyStatement({
         sid: 'CdkDeploy',
@@ -164,7 +166,6 @@ export class IamConstruct extends Construct {
           'cloudformation:DescribeStacks',
           'cloudformation:CreateStack',
           'cloudformation:UpdateStack',
-          'cloudformation:DeleteStack',
           'cloudformation:DescribeStackEvents',
           'cloudformation:GetTemplate',
           'cloudformation:ValidateTemplate',

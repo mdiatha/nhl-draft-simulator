@@ -148,7 +148,9 @@ jobs:
         run: npx tsc --noEmit
 
       - name: CDK synth (no AWS credentials - validates CloudFormation output)
-        run: npx cdk synth --context environment=production 2>&1
+        # ci=true suppresses the VPC context guard (real VPC IDs are only
+        # available at deploy time, not in CI without AWS credentials).
+        run: npx cdk synth --context environment=production --context ci=true 2>&1
 
   # - CDK diff (requires AWS credentials - PR + main push only) -
   cdk-diff:
@@ -269,22 +271,34 @@ jobs:
           COMMAND_ID=$(aws ssm send-command \
             --instance-ids "$EC2_INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
-            --parameters '{"commands":["set -euxo pipefail","TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H X-aws-ec2-metadata-token-ttl-seconds:60)","REGION=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/placement/region)","ECR_ACCOUNT=$(aws sts get-caller-identity --query Account --output text --region $REGION)","ECR_REG=\"$ECR_ACCOUNT.dkr.ecr.$REGION.amazonaws.com\"","aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REG","cd /home/ec2-user","docker compose pull api","docker compose run --rm api alembic upgrade head","docker compose up -d --no-deps api","sleep 10","curl -fsSL http://localhost/livez"]}' \
+            --parameters '{"commands":["set -euxo pipefail","TOKEN=$(curl -s -X PUT http://169.254.169.254/latest/api/token -H X-aws-ec2-metadata-token-ttl-seconds:60)","REGION=$(curl -s -H \"X-aws-ec2-metadata-token: $TOKEN\" http://169.254.169.254/latest/meta-data/placement/region)","ECR_ACCOUNT=$(aws sts get-caller-identity --query Account --output text --region $REGION)","ECR_REG=\"$ECR_ACCOUNT.dkr.ecr.$REGION.amazonaws.com\"","aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REG","cd /home/ec2-user","sed -i \"/^ECR_REGISTRY=/d;/^IMAGE_TAG=/d\" .env","echo \"ECR_REGISTRY=$ECR_REG\" >> .env","echo \"IMAGE_TAG='"$IMAGE_TAG"'\" >> .env","docker compose pull api","docker compose run --rm api alembic upgrade head","docker compose up -d --no-deps api","sleep 10","curl -fsSL http://localhost/livez"]}' \
             --query "Command.CommandId" \
             --output text)
 
           echo "SSM Command ID: $COMMAND_ID"
-          aws ssm wait command-executed \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" || true
+          # aws ssm wait times out after 20 polls (~200s) and exits non-zero even if
+          # the command is still in-progress. Poll manually instead so we wait the
+          # full timeout window before reading final status.
+          for i in $(seq 1 60); do
+            STATUS=$(aws ssm get-command-invocation \
+              --command-id "$COMMAND_ID" \
+              --instance-id "$EC2_INSTANCE_ID" \
+              --query "Status" --output text)
+            echo "[$i/60] Deploy status: $STATUS"
+            if [ "$STATUS" = "Success" ]; then break; fi
+            if [ "$STATUS" = "Failed" ] || [ "$STATUS" = "TimedOut" ] || [ "$STATUS" = "Cancelled" ]; then
+              echo "--- stderr ---"
+              aws ssm get-command-invocation \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --query "StandardErrorContent" --output text
+              exit 1
+            fi
+            sleep 10
+          done
 
-          STATUS=$(aws ssm get-command-invocation \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" \
-            --query "Status" --output text)
-
-          echo "Deploy status: $STATUS"
           if [ "$STATUS" != "Success" ]; then
+            echo "Deploy did not reach Success within timeout. Final status: $STATUS"
             aws ssm get-command-invocation \
               --command-id "$COMMAND_ID" \
               --instance-id "$EC2_INSTANCE_ID" \
@@ -329,6 +343,14 @@ jobs:
       - name: Type check
         run: npx tsc --noEmit
         working-directory: frontend
+
+      - name: Validate VITE_API_URL is set
+        run: |
+          if [ -z "${{ secrets.VITE_API_URL }}" ]; then
+            echo "ERROR: VITE_API_URL secret is not set. Frontend will have no API endpoint."
+            echo "Set it in GitHub → Settings → Secrets to the CloudFront HTTPS domain (e.g. https://d1234.cloudfront.net)"
+            exit 1
+          fi
 
       - name: Build
         run: npm run build

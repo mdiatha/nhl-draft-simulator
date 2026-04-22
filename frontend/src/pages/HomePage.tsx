@@ -276,7 +276,7 @@ export default function HomePage() {
             const rounds = Array.from(byRound.entries()).sort(([a], [b]) => a - b)
             return (
               <div className="space-y-6">
-                <p className="text-xs text-text-muted uppercase tracking-widest">Draft Results · Seed {seed}</p>
+                <p className="text-xs text-text-muted uppercase tracking-widest">Draft Results</p>
                 {rounds.map(([roundNum, roundPicks]) => (
                   <div key={roundNum}>
                     <div className="flex items-center gap-2 mb-2">

@@ -51,7 +51,10 @@ services:
       start_period: 30s
 
   api:
-    image: ${ECR_REGISTRY:-676022791412.dkr.ecr.us-east-1.amazonaws.com}/nhl-draft-api:${IMAGE_TAG:-latest}
+    # ECR_REGISTRY and IMAGE_TAG are set in /home/ec2-user/.env by the CI deploy
+    # script (derived from instance metadata + github.sha). No hardcoded fallback
+    # so a misconfigured deploy fails loudly instead of pulling a stale image.
+    image: ${ECR_REGISTRY}/nhl-draft-api:${IMAGE_TAG:-latest}
     restart: unless-stopped
     env_file:
       - /home/ec2-user/.env
@@ -61,6 +64,12 @@ services:
       REDIS_URL: redis://redis:6379/0
     ports:
       - "80:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsSL http://localhost:8000/livez || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 60s
     depends_on:
       db:
         condition: service_healthy
@@ -68,12 +77,14 @@ services:
         condition: service_healthy
       ollama:
         condition: service_healthy
+    # Migrations are run separately by the CI workflow via SSM before this
+    # container is (re)started, so we start uvicorn directly here.
     command: >
-      sh -c "alembic upgrade head && uvicorn app.main:app
+      uvicorn app.main:app
       --host 0.0.0.0
       --port 8000
       --timeout-keep-alive 120
-      --log-level info"
+      --log-level info
     logging:
       driver: "json-file"
       options:

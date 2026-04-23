@@ -206,7 +206,6 @@ def run_backtest(db, test_year: int = TEST_YEAR, train_cutoff: int = TRAIN_CUTOF
                 pick.id,
                 key_fn=lambda c: (
                     quality.get(c.id, 0.5),
-                    -(c.css_rank or 10_000),
                     c.points_per_game or -1.0,
                 ),
             )
@@ -218,7 +217,6 @@ def run_backtest(db, test_year: int = TEST_YEAR, train_cutoff: int = TRAIN_CUTOF
                 key_fn=lambda c: (
                     c.points_per_game or -1.0,
                     quality.get(c.id, 0.5),
-                    -(c.css_rank or 10_000),
                 ),
             )
         )
@@ -254,13 +252,8 @@ def run_backtest(db, test_year: int = TEST_YEAR, train_cutoff: int = TRAIN_CUTOF
 # ── Metric computation ────────────────────────────────────────────────────────
 
 def _rank_of_actual(candidates: list, actual_id: int, key_fn) -> int:
-    ranked = sorted(
-        candidates,
-        key=lambda candidate: tuple(
-            -value if isinstance(value, (int, float)) else value
-            for value in key_fn(candidate)
-        ),
-    )
+    # key_fn must return values where higher = better (we negate for descending sort)
+    ranked = sorted(candidates, key=lambda c: [-v for v in key_fn(c)])
     return next(
         (rank + 1 for rank, candidate in enumerate(ranked) if candidate.id == actual_id),
         len(ranked),

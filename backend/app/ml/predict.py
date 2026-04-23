@@ -61,7 +61,7 @@ def compute_pool_stats(prospects: list) -> dict:
 
 
 def score_pool_for_team(
-    prospects: list,           # available Prospect2025 ORM objects
+    prospects: list,           # available Prospect ORM objects
     profile,                   # GMTendencyProfile ORM object (or None)
     pick_slot: int,            # current overall pick number (1-based)
     draft_state: dict | None = None,
@@ -178,7 +178,9 @@ def _score_pool_inner(
         slot_norm = (1.0 - (pick_slot - 1) / MAX_DRAFT_POOL)
         cached_X["pick_slot_norm"] = slot_norm
         cached_X["rank_vs_slot"] = cached_X["css_rank_norm"] - slot_norm
-        cached_X["draft_round"]  = draft_round
+        # Overwrite round one-hots from cached features with the current round
+        for r in [1, 2, 3, 4]:
+            cached_X[f"round_{r}"] = int(draft_round == r)
 
         # Apply GM features per-row (profile-dependent — cannot be cached)
         gm_pos    = []
@@ -273,7 +275,7 @@ def _score_pool_inner(
             "draft_league":      p.draft_league,
             "draft_league_tier": p.draft_league_tier,
             "points_per_game":   p.points_per_game,
-            "gp_pre_draft":      p.games_played,      # pre-draft season GP
+            "gp_pre_draft":      p.games_played,
             "ppg_prev_season":   p.ppg_prev_season,
             "has_prev_season":   1 if p.ppg_prev_season is not None else 0,
             "age_at_draft":      p.age_at_draft,
@@ -314,8 +316,8 @@ def _validate_feature_ranges(X: pd.DataFrame) -> None:
         "pick_slot_norm":  (0.0,  1.0),
         "ppg_league_norm": (-0.5, 8.0),   # >8 = extreme scorer, suspicious
         "age_league_norm": (-5.0, 5.0),
-        "height_cm":       (150,  220),
-        "weight_kg":       (50,   150),
+        "height_norm":     (-20,  20),
+        "weight_norm":     (-25,  25),
         "gp_pre_draft":    (0,    100),
     }
     for col, (lo, hi) in checks.items():

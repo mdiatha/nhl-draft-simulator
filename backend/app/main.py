@@ -298,14 +298,14 @@ async def metrics():
 def _health_snapshot(db: Session) -> tuple[dict, bool]:
     import redis as redis_lib
     from app.ml.registry import registry
-    from app.models import Prospect2025, Team
+    from app.models import Prospect, Team
 
     db_ok = True
     prospects_count = None
     teams_count = None
     try:
         db.execute(text("SELECT 1"))
-        prospects_count = db.query(Prospect2025).count()
+        prospects_count = db.query(Prospect).count()
         teams_count = db.query(Team).count()
     except Exception:
         db_ok = False

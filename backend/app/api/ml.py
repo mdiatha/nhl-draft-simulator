@@ -218,6 +218,75 @@ async def backtest_model(
         raise HTTPException(status_code=500, detail=f"Backtest error: {e}")
 
 
+@router.post("/backtest/vs-css")
+async def backtest_vs_css(
+    test_year: int = 2024,
+    train_cutoff: int = 2023,
+    db: Session = Depends(get_db),
+):
+    """
+    Head-to-head: model accuracy vs CSS best-available baseline.
+
+    CSS best-available = always pick the highest CSS-ranked player still on the board.
+    This is the meaningful baseline — GMs already largely follow CSS rank, so any
+    lift here reflects what the GM tendency + contextual features actually add.
+
+    Returns top-1/3/5 accuracy and MRR for both, plus the lift (model − CSS).
+    Positive lift = model beats CSS; negative = CSS rank alone is better.
+    """
+    _YEAR_LO, _YEAR_HI = 2000, 2025
+    if not (_YEAR_LO <= test_year <= _YEAR_HI):
+        raise HTTPException(status_code=422, detail=f"test_year must be between {_YEAR_LO} and {_YEAR_HI}")
+    if not (_YEAR_LO <= train_cutoff <= _YEAR_HI):
+        raise HTTPException(status_code=422, detail=f"train_cutoff must be between {_YEAR_LO} and {_YEAR_HI}")
+    if train_cutoff >= test_year:
+        raise HTTPException(status_code=422, detail="train_cutoff must be strictly less than test_year")
+
+    from app.ml.backtest import run_backtest
+    try:
+        full = run_backtest(db, test_year=test_year, train_cutoff=train_cutoff)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.exception("Backtest failed")
+        raise HTTPException(status_code=500, detail=f"Backtest error: {e}")
+
+    css = full["baselines"]["consensus_css"]
+    lift = full["lift_vs_baselines"]["consensus_css"]
+    return {
+        "status": "ok",
+        "test_year": full["test_year"],
+        "train_cutoff": full["train_cutoff"],
+        "picks_evaluated": full["picks_evaluated"],
+        "model": {
+            "top1_accuracy": full["top1_accuracy"],
+            "top3_accuracy": full["top3_accuracy"],
+            "top5_accuracy": full["top5_accuracy"],
+            "mrr": full["mrr"],
+        },
+        "css_baseline": {
+            "label": css["label"],
+            "top1_accuracy": css["top1_accuracy"],
+            "top3_accuracy": css["top3_accuracy"],
+            "top5_accuracy": css["top5_accuracy"],
+            "mrr": css["mrr"],
+        },
+        "lift_vs_css": {
+            "top1_accuracy": lift["top1_accuracy"],
+            "top3_accuracy": lift["top3_accuracy"],
+            "top5_accuracy": lift["top5_accuracy"],
+            "mrr": lift["mrr"],
+            "verdict": (
+                "model beats CSS" if lift["top1_accuracy"] > 0
+                else "CSS rank alone is better" if lift["top1_accuracy"] < 0
+                else "tied"
+            ),
+        },
+        "by_round": full["by_round"],
+        "worst_misses": full["worst_misses"],
+    }
+
+
 @router.post("/backtest/multi-year")
 async def backtest_multi_year(
     years: list[int] | None = None,
@@ -350,15 +419,15 @@ async def get_prospect_scores(db: Session = Depends(get_db)):
     Scores reflect pure prospect quality as seen by the model — useful for
     displaying a model-based ranking on the prospects page.
     """
-    from app.models import Prospect2025
+    from app.models import Prospect
     from app.ml.predict import score_pool_for_team, compute_pool_stats
 
     if not registry.is_loaded:
         raise HTTPException(status_code=503, detail="Model not loaded. Run POST /api/ml/train first.")
 
     prospects = (
-        db.query(Prospect2025)
-        .order_by(Prospect2025.css_ranking.nullslast())
+        db.query(Prospect)
+        .order_by(Prospect.css_ranking.nullslast())
         .all()
     )
     if not prospects:

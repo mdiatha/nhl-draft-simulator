@@ -53,11 +53,11 @@ def explain_prospect_pick(
         ) from exc
 
     from app.ml.features import build_features, FEATURE_COLS
-    from app.models import Prospect2025, Team, GMTendencyProfile
+    from app.models import Prospect, Team, GMTendencyProfile
     from app.models.general_manager import GeneralManager
 
     # ── Fetch prospect ────────────────────────────────────────────────────────
-    prospect = db.query(Prospect2025).filter(Prospect2025.id == prospect_id).first()
+    prospect = db.query(Prospect).filter(Prospect.id == prospect_id).first()
     if prospect is None:
         raise ValueError(f"Prospect {prospect_id} not found")
 
@@ -106,7 +106,6 @@ def explain_prospect_pick(
     # ── Build the raw row dict ────────────────────────────────────────────────
     ppg = prospect.points_per_game or 0.0
     ppg_prev = prospect.ppg_prev_season  # may be None
-    ppg_trend = (ppg - ppg_prev) if ppg_prev is not None else 0.0
     has_prev = 1 if ppg_prev is not None else 0
 
     row = {
@@ -120,19 +119,19 @@ def explain_prospect_pick(
         "age_at_draft":          prospect.age_at_draft,
         "css_rank_norm":         css_rank_norm,
         "overall_pick":          pick_number,
+        "draft_round":           1,
         "gm_pos_weight":         gm_pos_weight,
         "gm_league_weight":      gm_league_weight,
         "gm_nat_weight":         gm_nat_weight,
-        # Contextual features: use neutral defaults for single-row explanation
+        # Contextual features: neutral defaults for single-row explanation
         "ppg_league_norm":       1.0,
         "age_league_norm":       0.0,
         "pos_taken_before_norm": 0.2,
         "pos_remaining_norm":    0.2,
         "team_drafted_this_pos": 0,
-        # Season-over-season
+        "pos_quality_rank_norm": 0.5,
         "gp_pre_draft":          prospect.games_played or 30,
         "ppg_prev_season":       ppg_prev if ppg_prev is not None else 0.0,
-        "ppg_trend":             ppg_trend,
         "has_prev_season":       has_prev,
     }
 

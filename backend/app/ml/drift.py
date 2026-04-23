@@ -182,7 +182,7 @@ def compute_drift_report(db) -> dict:
             "checked_at": "2026-03-29T...",
         }
     """
-    from app.models import DraftPickHistorical, Prospect2025
+    from app.models import DraftPickHistorical, Prospect
     from app.constants import infer_league_key
 
     # ── Fetch training data: draft picks from 2015–2024 ───────────────────────
@@ -197,7 +197,7 @@ def compute_drift_report(db) -> dict:
     logger.info(f"Drift check: {len(training_picks)} training picks (2015-2024)")
 
     # ── Fetch current 2025 prospects ──────────────────────────────────────────
-    current_prospects = db.query(Prospect2025).all()
+    current_prospects = db.query(Prospect).all()
     logger.info(f"Drift check: {len(current_prospects)} current 2025 prospects")
 
     # ── Extract per-dimension values ──────────────────────────────────────────

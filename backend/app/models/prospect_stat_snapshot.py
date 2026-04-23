@@ -23,7 +23,7 @@ class ProspectStatSnapshot(Base):
     __tablename__ = "prospect_stat_snapshots"
 
     id               = Column(Integer, primary_key=True)
-    prospect_id      = Column(Integer, ForeignKey("prospects_2025.id", ondelete="SET NULL"),
+    prospect_id      = Column(Integer, ForeignKey("prospects.id", ondelete="SET NULL"),
                                nullable=True, index=True)
     player_name      = Column(String(100), nullable=False)
     draft_year       = Column(Integer, nullable=False)
@@ -38,7 +38,7 @@ class ProspectStatSnapshot(Base):
     css_ranking      = Column(Integer, nullable=True)
     created_at       = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
-    prospect = relationship("Prospect2025", back_populates="stat_snapshots", foreign_keys=[prospect_id])
+    prospect = relationship("Prospect", back_populates="stat_snapshots", foreign_keys=[prospect_id])
 
     __table_args__ = (
         Index("idx_snapshots_year_type", "draft_year", "snapshot_type"),

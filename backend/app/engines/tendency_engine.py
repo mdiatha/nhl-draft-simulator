@@ -204,45 +204,158 @@ def compute_gm_tendency(gm_id: int, db: Session, priors: dict | None = None) -> 
     }
 
 
-def classify_archetype(tendency: dict) -> str:
+# ── Archetype labels ──────────────────────────────────────────────────────────
+# Five named archetypes used across the UI and agent responses.
+ARCHETYPE_LABELS = ["BPA", "need-based", "safe", "euro-scout", "analytics"]
+
+# Minimum GMs required to fit a GMM; below this fall back to rule-based.
+_GMM_MIN_SAMPLES = 10
+
+# Canonical archetype centroids in (eur_share, top2_concentration) space.
+# Used to name unlabeled GMM clusters by finding the nearest centroid.
+_ARCHETYPE_CENTROIDS: dict[str, tuple[float, float]] = {
+    "BPA":        (0.33, 0.50),   # balanced — league-average EUR, moderate positional spread
+    "need-based": (0.33, 0.72),   # high top-2 positional concentration
+    "safe":       (0.12, 0.52),   # very low EUR share
+    "euro-scout": (0.58, 0.50),   # high EUR share, balanced positions
+    "analytics":  (0.38, 0.43),   # above-average EUR, low positional concentration
+}
+
+
+def _tendency_to_vec(tendency: dict) -> tuple[float, float]:
+    """Extract the 2D feature vector used for archetype clustering."""
+    pos_w = tendency.get("position_weights", {})
+    nat_w = tendency.get("nationality_weights", {})
+    eur_share = nat_w.get("NORDIC", 0.0) + nat_w.get("SLAVIC", 0.0) + nat_w.get("EUR_OTHER", 0.0)
+    top2 = sum(sorted(pos_w.values(), reverse=True)[:2]) if pos_w else 0.0
+    return eur_share, top2
+
+
+def _label_cluster(centroid: tuple[float, float]) -> str:
+    """Map a GMM cluster centroid to the nearest named archetype."""
+    import math
+    best_label = "BPA"
+    best_dist  = float("inf")
+    for label, ref in _ARCHETYPE_CENTROIDS.items():
+        dist = math.sqrt((centroid[0] - ref[0]) ** 2 + (centroid[1] - ref[1]) ** 2)
+        if dist < best_dist:
+            best_dist  = dist
+            best_label = label
+    return best_label
+
+
+def fit_archetype_clusters(tendencies: list[dict]) -> dict | None:
+    """
+    Fit a 5-component Gaussian Mixture Model on GM tendency vectors.
+
+    Returns a mapping {cluster_id: archetype_label} if fitting succeeds,
+    or None if there are too few samples for a reliable fit.
+
+    Each GM is represented as (eur_share, top2_positional_concentration).
+    GMs with < 15 picks are excluded — their shrunk vectors are too close to
+    the population prior to carry useful cluster signal.
+
+    The GMM is fit with covariance_type="full" and n_init=10 to avoid local
+    minima. Cluster→label assignment uses nearest-centroid matching against
+    the canonical _ARCHETYPE_CENTROIDS so labels stay interpretable.
+    """
+    try:
+        from sklearn.mixture import GaussianMixture
+        import numpy as np
+    except ImportError:
+        logger.warning("sklearn not available — archetype clustering requires scikit-learn")
+        return None
+
+    qualified = [t for t in tendencies if t.get("total_picks", 0) >= 15]
+    if len(qualified) < _GMM_MIN_SAMPLES:
+        logger.info(
+            "fit_archetype_clusters: only %d qualified GMs (need %d) — skipping GMM",
+            len(qualified), _GMM_MIN_SAMPLES,
+        )
+        return None
+
+    X = np.array([_tendency_to_vec(t) for t in qualified])
+
+    n_components = min(5, len(qualified))
+    gmm = GaussianMixture(
+        n_components=n_components,
+        covariance_type="full",
+        n_init=10,
+        random_state=42,
+        max_iter=300,
+    )
+    gmm.fit(X)
+
+    # Map each cluster centroid to its nearest named archetype
+    cluster_labels: dict[int, str] = {}
+    used_labels: set[str] = set()
+    # Sort clusters by eur_share so ties resolve deterministically
+    centroid_order = sorted(range(n_components), key=lambda i: gmm.means_[i][0])
+    for cluster_id in centroid_order:
+        cx, cy = float(gmm.means_[cluster_id][0]), float(gmm.means_[cluster_id][1])
+        label = _label_cluster((cx, cy))
+        # If two clusters map to the same label, append index to distinguish
+        if label in used_labels:
+            label = f"{label}_{cluster_id}"
+        used_labels.add(label)
+        cluster_labels[cluster_id] = label
+
+    logger.info(
+        "fit_archetype_clusters: GMM fitted on %d GMs, %d components, cluster_labels=%s",
+        len(qualified), n_components, cluster_labels,
+    )
+    return {"gmm": gmm, "cluster_labels": cluster_labels}
+
+
+def classify_archetype(tendency: dict, gmm_result: dict | None = None) -> str:
     """
     Classify a GM's drafting archetype from their historical pick profile.
 
-    Note: archetype classification runs on the *shrunk* weights, so new GMs
-    with few picks will classify closer to "BPA" (the population average)
-    rather than producing noisy extreme classifications.
+    When gmm_result is provided (fitted via fit_archetype_clusters), uses the
+    GMM cluster assignment — boundaries are data-driven from the actual GM
+    population rather than manually tuned thresholds.
+
+    Falls back to rule-based classification when:
+      - gmm_result is None (not enough GMs to fit, or sklearn unavailable)
+      - GM has fewer than 15 picks (shrunk toward prior, unreliable cluster)
 
     Archetypes:
-    - "BPA"        Best player available — balanced positional spread
-    - "need-based" Concentrates picks heavily at 1-2 positions (>65%)
-    - "safe"       Strong NA bias — avoids European prospects (EUR < 20%)
-    - "euro-scout" Actively targets European talent (EUR > 47%)
-    - "analytics"  Low positional concentration + actively values non-NA
+      BPA        — Best player available, balanced positional spread
+      need-based — Concentrates picks at 1-2 positions
+      safe       — Strong NA bias, avoids European prospects
+      euro-scout — Actively targets European talent
+      analytics  — Low positional concentration + above-average EUR targeting
     """
-    total     = tendency.get("total_picks", 0)
-    pos_w     = tendency.get("position_weights", {})
-    nat_w     = tendency.get("nationality_weights", {})
+    total = tendency.get("total_picks", 0)
 
     if total < 15:
         return "BPA"
 
-    eur_share = nat_w.get("NORDIC", 0) + nat_w.get("SLAVIC", 0) + nat_w.get("EUR_OTHER", 0)
+    # ── GMM path ──────────────────────────────────────────────────────────────
+    if gmm_result is not None:
+        try:
+            import numpy as np
+            vec = np.array([_tendency_to_vec(tendency)])
+            cluster_id = int(gmm_result["gmm"].predict(vec)[0])
+            label = gmm_result["cluster_labels"].get(cluster_id, "BPA")
+            # Strip cluster-index suffix added to resolve label collisions
+            return label.split("_")[0] if label.split("_")[0] in ARCHETYPE_LABELS else label
+        except Exception as exc:
+            logger.warning("classify_archetype.gmm_failed error=%s — falling back to rules", exc)
 
-    top2 = sum(sorted(pos_w.values(), reverse=True)[:2]) if pos_w else 0.0
+    # ── Rule-based fallback ───────────────────────────────────────────────────
+    pos_w = tendency.get("position_weights", {})
+    nat_w = tendency.get("nationality_weights", {})
+    eur_share, top2 = _tendency_to_vec(tendency)
 
     if top2 > 0.65:
         return "need-based"
-
     if eur_share < 0.20:
         return "safe"
-
     if eur_share > 0.47:
         return "euro-scout"
-
-    # Analytics: balanced positional spread + actively targets European talent
     if top2 < 0.55 and eur_share > 0.30:
         return "analytics"
-
     return "BPA"
 
 
@@ -252,6 +365,12 @@ def compute_all_gm_tendencies(db: Session) -> list[GMTendencyProfile]:
 
     Computes the population prior once from all historical picks, then passes
     it to each GM's tendency computation — avoids N redundant full-table scans.
+
+    Archetype classification uses a GMM fitted on the full tendency population
+    when enough GMs are available (>= _GMM_MIN_SAMPLES with 15+ picks). This
+    makes cluster boundaries data-driven rather than manually tuned thresholds.
+    Falls back to rule-based classification when sklearn is unavailable or the
+    sample is too small.
     """
     # One query for priors — shared across all GMs
     all_picks = db.query(DraftPickHistorical).all()
@@ -259,12 +378,22 @@ def compute_all_gm_tendencies(db: Session) -> list[GMTendencyProfile]:
     logger.info(f"Population priors computed from {len(all_picks)} historical picks")
 
     active_gms = db.query(GeneralManager).filter(GeneralManager.is_active).all()
+
+    # Compute all tendency dicts first so we can fit the GMM on the full population
+    # before assigning archetypes — GMM needs the complete set of vectors.
+    tendency_by_gm: dict[int, dict] = {}
+    for gm in active_gms:
+        logger.info(f"Computing tendency for GM: {gm.name} (id={gm.id})")
+        tendency_by_gm[gm.id] = compute_gm_tendency(gm.id, db, priors=priors)
+
+    # Fit GMM once on all tendency vectors; None = fall back to rules per GM
+    gmm_result = fit_archetype_clusters(list(tendency_by_gm.values()))
+
     profiles = []
 
     for gm in active_gms:
-        logger.info(f"Computing tendency for GM: {gm.name} (id={gm.id})")
-        tendency = compute_gm_tendency(gm.id, db, priors=priors)
-        archetype = classify_archetype(tendency)
+        tendency = tendency_by_gm[gm.id]
+        archetype = classify_archetype(tendency, gmm_result=gmm_result)
 
         existing = db.query(GMTendencyProfile).filter(
             GMTendencyProfile.gm_id == gm.id

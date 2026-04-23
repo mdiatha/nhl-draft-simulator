@@ -12,7 +12,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db, get_redis
-from app.models import Team, GeneralManager, GMTendencyProfile, Prospect2025
+from app.models import Team, GeneralManager, GMTendencyProfile, Prospect
 from app.ml.predict import score_pool_for_team, compute_pool_stats
 from app.ml.registry import registry
 
@@ -152,7 +152,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
     # version are automatically bypassed after a hot-swap — no explicit cache flush.
     from app.ml.registry import registry as _registry
     _model_hash = _registry.model_hash
-    cache_key = f"draft_v11:{_model_hash}:{seed}:{body.temperature}:{'-'.join(map(str, body.lottery_result))}"
+    cache_key = f"draft_v11:{_model_hash}:{seed}:{body.temperature}:{body.num_rounds}:{'-'.join(map(str, body.lottery_result))}"
     if REDIS_OK and _redis:
         cached = _redis.get(cache_key)
         if cached:
@@ -165,8 +165,8 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
 
     # ── Load everything once ──────────────────────────────────────────────────
     prospects = (
-        db.query(Prospect2025)
-        .order_by(Prospect2025.css_ranking.nullslast())
+        db.query(Prospect)
+        .order_by(Prospect.css_ranking.nullslast())
         .all()
     )
     if not prospects:
@@ -314,8 +314,8 @@ Write in the style of a hockey analyst. Be specific — cite player names and pi
 
     try:
         import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        response = client.messages.create(
+        client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        response = await client.messages.create(
             model=settings.ANTHROPIC_MODEL,
             max_tokens=600,
             messages=[{"role": "user", "content": prompt}],
@@ -382,8 +382,8 @@ async def draft_analysis(body: DraftSummaryRequest):
 
     try:
         import anthropic as _anthropic
-        client = _anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
-        response = client.messages.create(
+        client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+        response = await client.messages.create(
             model=settings.ANTHROPIC_MODEL,
             max_tokens=1200,
             tools=analysis_tool,
@@ -445,14 +445,14 @@ Write in the style of a hockey analyst. Be specific — cite player names and pi
     import anthropic as _anthropic
 
     async def _stream():
-        client = _anthropic.Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        client = _anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
         try:
-            with client.messages.stream(
+            async with client.messages.stream(
                 model=settings.ANTHROPIC_MODEL,
                 max_tokens=600,
                 messages=[{"role": "user", "content": prompt}],
             ) as stream:
-                for text in stream.text_stream:
+                async for text in stream.text_stream:
                     yield f"data: {json.dumps({'token': text})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
         except Exception as exc:

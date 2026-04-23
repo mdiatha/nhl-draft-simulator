@@ -109,10 +109,16 @@ def download_model(local_path: Path) -> bool:
             s3.download_file(bucket, key, str(dest))
             logger.info("s3.download", extra={"bucket": bucket, "key": key})
         return True
-    except s3.exceptions.NoSuchKey:  # type: ignore[attr-defined]
-        logger.info("s3.no_model_found", extra={"bucket": bucket, "key": "models/latest/model.pkl"})
-        return False
     except Exception as exc:
+        # boto3 surfaces S3 errors as botocore.exceptions.ClientError.
+        # Check the error code explicitly — accessing s3.exceptions.NoSuchKey
+        # on the client object raises AttributeError instead of catching the error.
+        import botocore.exceptions
+        if isinstance(exc, botocore.exceptions.ClientError):
+            code = exc.response.get("Error", {}).get("Code", "")
+            if code in ("NoSuchKey", "404"):
+                logger.info("s3.no_model_found", extra={"bucket": bucket, "key": "models/latest/model.pkl"})
+                return False
         logger.error("s3.download_failed", extra={"error": str(exc)})
         return False
 

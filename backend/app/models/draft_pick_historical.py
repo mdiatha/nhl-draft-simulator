@@ -15,6 +15,7 @@ class DraftPickHistorical(Base):
     # Foreign Keys
     team_id = Column(Integer, ForeignKey("teams.id"), nullable=True)
     gm_id = Column(Integer, ForeignKey("general_managers.id"), nullable=True)
+    player_id = Column(Integer, ForeignKey("players.id"), nullable=True, index=True)
 
     # Player info (denormalized - player may not be in prospects table)
     player_name = Column(String(200), nullable=True)
@@ -43,11 +44,13 @@ class DraftPickHistorical(Base):
     # Relationships
     team = relationship("Team", foreign_keys=[team_id])
     gm = relationship("GeneralManager", back_populates="draft_picks_historical")
+    player = relationship("Player", back_populates="historical_picks")
 
     __table_args__ = (
         Index("ix_draft_picks_historical_year", "year"),
         Index("ix_draft_picks_historical_team_id", "team_id"),
         Index("ix_draft_picks_historical_gm_id", "gm_id"),
+        Index("ix_draft_picks_historical_player_id", "player_id"),
         Index("ix_draft_picks_historical_overall_pick", "overall_pick"),
         Index("ix_draft_picks_historical_position", "position"),
         Index("ix_draft_picks_historical_year_round", "year", "round"),

@@ -116,14 +116,14 @@ def run_ingestion_checks(db) -> QualityReport:
       5. No duplicate (year, overall_pick) pairs in historical picks
       6. GM records exist for all 32 teams
     """
-    from app.models import Prospect2025, Team, GeneralManager
+    from app.models import Prospect, Team, GeneralManager
     from app.models.draft_pick_historical import DraftPickHistorical
     from sqlalchemy import func
 
     report = QualityReport()
 
     # ── 1. Prospect count ─────────────────────────────────────────────────────
-    n_prospects = db.query(Prospect2025).count()
+    n_prospects = db.query(Prospect).count()
     if n_prospects < 150:
         _record(report, CheckResult(
             "prospect_count", CheckStatus.FAIL,
@@ -145,8 +145,8 @@ def run_ingestion_checks(db) -> QualityReport:
     # ── 2. Critical field null rates ──────────────────────────────────────────
     critical_fields = ["position", "nationality", "draft_league"]
     for col_name in critical_fields:
-        col = getattr(Prospect2025, col_name)
-        null_count = db.query(Prospect2025).filter(col.is_(None)).count()
+        col = getattr(Prospect, col_name)
+        null_count = db.query(Prospect).filter(col.is_(None)).count()
         null_rate = null_count / n_prospects if n_prospects > 0 else 1.0
         if null_rate > 0.20:
             _record(report, CheckResult(
@@ -162,11 +162,11 @@ def run_ingestion_checks(db) -> QualityReport:
             ))
 
     # ── 3. ppg_prev_season fill rate ──────────────────────────────────────────
-    with_player_id = db.query(Prospect2025).filter(
-        Prospect2025.nhl_player_id.isnot(None)
+    with_player_id = db.query(Prospect).filter(
+        Prospect.nhl_player_id.isnot(None)
     ).count()
-    with_prev = db.query(Prospect2025).filter(
-        Prospect2025.ppg_prev_season.isnot(None)
+    with_prev = db.query(Prospect).filter(
+        Prospect.ppg_prev_season.isnot(None)
     ).count()
     fill_rate = with_prev / with_player_id if with_player_id > 0 else 0.0
     if fill_rate < 0.40 and with_player_id > 50:

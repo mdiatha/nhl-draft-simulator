@@ -1,9 +1,10 @@
 """
 Real-time prospect stat ingestion pipeline.
 
-Fetches live pre-draft stats from the NHL API for all 2025 prospects that have
-an nhl_player_id. Stores a timestamped row in prospect_stat_history and updates
-the live points_per_game / games_played columns on prospects_2025.
+Fetches live pre-draft stats from the NHL API for active prospects that have an
+`nhl_player_id`. Stores a timestamped row in `prospect_stat_history`, refreshes
+the denormalized live columns on `prospects`, and persists a normalized season
+record in `player_season_stats`.
 
 Intended to run daily via:
   - EventBridge CronJob → Lambda handler (lambda_handler below)
@@ -22,6 +23,9 @@ from typing import Optional
 import httpx
 from sqlalchemy.orm import Session
 
+from app.constants import DRAFT_YEAR
+from app.ingestion.normalized import upsert_player_season_stat
+
 logger = logging.getLogger(__name__)
 
 NHL_API_BASE    = "https://api-web.nhle.com/v1"
@@ -33,16 +37,19 @@ MAX_PROSPECTS   = 500    # safety cap — avoid hammering the NHL API
 
 async def fetch_and_store_stats(db: Session) -> dict:
     """
-    Fetch live stats for all 2025 prospects with a known nhl_player_id.
+    Fetch live stats for all active prospects with a known nhl_player_id.
 
     Returns a summary dict: {updated, skipped, errors, fetched_at}
     """
-    from app.models import Prospect2025
+    from app.models import Prospect
     from app.models.prospect_stat_history import ProspectStatHistory
 
     prospects_with_id = (
-        db.query(Prospect2025)
-        .filter(Prospect2025.nhl_player_id.isnot(None))
+        db.query(Prospect)
+        .filter(
+            Prospect.nhl_player_id.isnot(None),
+            Prospect.is_active.is_(True),
+        )
         .limit(MAX_PROSPECTS)
         .all()
     )
@@ -89,6 +96,25 @@ async def fetch_and_store_stats(db: Session) -> dict:
                     prospect.goals = stats["goals"]
                 if stats.get("assists") is not None:
                     prospect.assists = stats["assists"]
+
+                if prospect.player is not None:
+                    upsert_player_season_stat(
+                        db,
+                        player=prospect.player,
+                        season_year_start=DRAFT_YEAR - 1,
+                        season_year_end=DRAFT_YEAR,
+                        league=stats.get("league"),
+                        team_name=stats.get("team_name"),
+                        games_played=stats.get("games_played"),
+                        goals=stats.get("goals"),
+                        assists=stats.get("assists"),
+                        points=stats.get("points"),
+                        points_per_game=stats.get("points_per_game"),
+                        season_type=stats.get("season_type", "pre_draft"),
+                        source="nhl_game_log",
+                        as_of_date=fetched_at.date(),
+                        raw_payload=stats.get("raw"),
+                    )
 
                 updated += 1
 
@@ -160,6 +186,7 @@ async def _fetch_player_stats(client: httpx.AsyncClient, nhl_player_id: int) -> 
         "points_per_game": ppg,
         "season_type":     season_type,
         "league":          game_log[0].get("leagueAbbrev") if game_log else None,
+        "team_name":       game_log[0].get("teamAbbrev") if game_log else None,
         "raw":             {"game_count": total_gp, "source": "nhl_game_log"},
     }
 

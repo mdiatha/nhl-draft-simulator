@@ -17,7 +17,7 @@ class ProspectFeatures(Base):
     )
 
     id              = Column(Integer, primary_key=True)
-    prospect_id     = Column(Integer, ForeignKey("prospects_2025.id", ondelete="CASCADE"),
+    prospect_id     = Column(Integer, ForeignKey("prospects.id", ondelete="CASCADE"),
                              nullable=False, index=True)
     refreshed_at    = Column(DateTime(timezone=True), nullable=False,
                              default=lambda: datetime.now(timezone.utc))
@@ -25,6 +25,7 @@ class ProspectFeatures(Base):
     css_rank_norm   = Column(Float, nullable=True)
     ppg_league_norm = Column(Float, nullable=True)
     pick_slot_norm  = Column(Float, nullable=True)
+    prospect        = relationship("Prospect", back_populates="features")
 
     def __repr__(self) -> str:
         return f"<ProspectFeatures prospect_id={self.prospect_id} refreshed={self.refreshed_at}>"

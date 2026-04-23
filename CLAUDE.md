@@ -52,7 +52,7 @@ curl http://localhost:8000/health                           # DB + Redis + model
 3. Results cached in Redis (draft simulations keyed by seed + lottery order, TTL 3600s)
 
 ### ML pipeline (`backend/app/ml/`)
-- **train.py** — XGBoost LambdaMART (`rank:ndcg`). Two modes: `final=False` uses a temporal split (train ≤ `TRAIN_CUTOFF_YEAR=2019`, val ≥ `VAL_START_YEAR=2020`) and runs conformal calibration automatically; `final=True` trains on all data with fixed `FINAL_N_ESTIMATORS=173`.
+- **train.py** — XGBoost LambdaMART (`rank:pairwise`). Always runs two phases: 9-fold walk-forward CV (2014→2015 … 2022→2023) to compute a reliable NDCG@1 estimate, then a final temporal split (train ≤ `TRAIN_CUTOFF_YEAR=2022`, val ≥ `VAL_START_YEAR=2023`) for early stopping + calibration. Phase 2 retrains on all data using `best_iteration` from the final split. `final` flag is kept for API compatibility but no longer changes behavior.
 - **features.py** — 33-feature engineering. `build_training_dataset(db)` pulls historical picks with negative sampling (`NEGATIVE_WINDOW=31` picks ahead). Feature normalization is fixed-denominator (e.g. `CSS_RANK_DENOM=450`) — must match identically in both training and inference or predictions break.
 - **predict.py** — Inference path. Scores prospects via `score_pool_for_team()`. Has a feature store cache path (pre-materialized features for each prospect); if cache column schema is stale it falls back gracefully.
 - **registry.py** — Module-level singleton `registry`. Loaded at startup, hot-swapped via `POST /api/ml/reload`. Holds XGBoost model + `calibration` (conformal prediction quantiles).
@@ -107,7 +107,7 @@ This section is intentionally honest. Interviewers respect self-awareness over o
 
 | Constant | Location | Value | Impact if changed |
 |---|---|---|---|
-| `TRAIN_CUTOFF_YEAR` | `ml/train.py:46` | 2019 | Shifts train/val split |
+| `TRAIN_CUTOFF_YEAR` | `ml/train.py:40` | 2022 | Upper bound for final temporal split (best_iteration search) |
 | `FINAL_N_ESTIMATORS` | `ml/train.py:49` | 200 | Must match `best_iteration` from eval run; reset to 200 after feature set change |
 | `NEGATIVE_WINDOW` | `ml/features.py` | 31 | Changes training set size and model behavior |
 | `CSS_RANK_DENOM` | `ml/features.py` | 450 | Train/inference normalization — must stay identical |

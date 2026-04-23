@@ -36,7 +36,7 @@ CACHE_TTL_HOURS = 25   # rows older than this are treated as stale
 # Cached rows written with a different version are treated as a full cache miss,
 # preventing silent corruption when features change between deployments.
 # Format: "v{N}" where N increments on each breaking feature set change.
-FEATURE_SCHEMA_VERSION = "v2"   # v2: 33-feature set with rank_gap_norm + nat groups
+FEATURE_SCHEMA_VERSION = "v4"   # v4: removed ppg_trend_norm (train/inference mismatch)
 
 
 # ── Write path ─────────────────────────────────────────────────────────────────
@@ -51,13 +51,13 @@ def refresh_feature_store(db: Session) -> int:
 
     Returns the number of prospects processed.
     """
-    from app.models import Prospect2025
+    from app.models import Prospect
     from app.models.prospect_features import ProspectFeatures
     from app.ml.predict import compute_pool_stats
     from app.ml.features import build_features, _gm_features, _contextual_feats, _css_list, _css_norm_within_list, FEATURE_COLS
     from collections import Counter, defaultdict
 
-    prospects = db.query(Prospect2025).order_by(Prospect2025.css_ranking.nullslast()).all()
+    prospects = db.query(Prospect).order_by(Prospect.css_ranking.nullslast()).all()
     if not prospects:
         logger.warning("feature_store.no_prospects")
         return 0

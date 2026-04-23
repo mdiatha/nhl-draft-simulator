@@ -69,45 +69,30 @@ NEGATIVE_WINDOW = 31
 
 LEAGUE_KEYS = ["tier1_CAN", "tier1_USA", "tier1_EUR", "tier2", "tier3"]
 
+DRAFT_ROUNDS = [1, 2, 3, 4]
+
 FEATURE_COLS: list[str] = (
     # Position one-hot (5)
     [f"pos_{p}" for p in POSITIONS]
     # Nationality group one-hot (5) — CAN, USA, NORDIC, SLAVIC, EUR_OTHER
-    # Replaces 15 individual nationality one-hots, 14 of which had zero importance.
     + [f"nat_{g}" for g in NAT_GROUPS]
     # League one-hot (5) — replaces ordinal league_tier integer
     + [f"league_{k}" for k in LEAGUE_KEYS]
-    # Physical (2)
-    + ["height_cm", "weight_kg"]
-    # League-normalized quality (2).
-    # Raw points_per_game and age_at_draft dropped: they had zero XGBoost importance
-    # because ppg_league_norm and age_league_norm are strictly better versions of the
-    # same signal (they remove league scoring-environment bias). Redundant raw features
-    # only add noise to the gradient computation.
+    # Physical — position-relative deviation from positional median
+    + ["height_norm", "weight_norm"]
+    # League-normalized quality (2)
     + ["ppg_league_norm", "age_league_norm"]
-    # Consensus rank signals (3).
-    # css_rank_norm dropped: it equals rank_vs_slot + pick_slot_norm exactly, so it
-    # is linearly redundant once both derived features are present. XGBoost confirmed
-    # this with zero importance across all trained versions. rank_gap_norm captures
-    # the "generational talent" override signal without collinearity.
+    # Consensus rank signals (3)
     + ["pick_slot_norm", "rank_vs_slot", "rank_gap_norm"]
-    # GM tendency (3) — gm_avg_deviation removed: pick slot is lottery-determined,
-    # not a GM preference, so deviation from round midpoint is a team-quality
-    # signal rather than a drafting-style signal.
+    # GM tendency (3)
     + ["gm_pos_weight", "gm_league_weight", "gm_nat_weight"]
-    # Draft-state / supply signals (4).
-    # pos_quality_rank_norm: where does this prospect rank among same-position players
-    # still on the board? 1.0 = best available at this position, 0.0 = worst.
-    # Captures the primary heuristic positional GMs use: "who is the best C/D/G left?"
-    # This interacts with gm_pos_weight — high pos_weight + high pos_quality_rank_norm
-    # → strong pick signal. Low pos_quality_rank_norm = better alternatives exist.
+    # Draft-state / supply signals (4)
     + ["pos_taken_before_norm", "pos_remaining_norm", "team_drafted_this_pos",
        "pos_quality_rank_norm"]
-    # Season-over-season production (4)
-    + ["gp_pre_draft", "ppg_prev_season", "ppg_trend", "has_prev_season"]
-    # Draft round (1) — critical for multi-round training: round 1 = BPA/elite,
-    # round 7 = developmental gambles. Without this the model conflates dynamics.
-    + ["draft_round"]
+    # Season-over-season production (3)
+    + ["gp_pre_draft", "ppg_prev_season", "has_prev_season"]
+    # Draft round one-hot (4)
+    + [f"round_{r}" for r in DRAFT_ROUNDS]
 )
 
 
@@ -326,9 +311,17 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     for grp in NAT_GROUPS:
         out[f"nat_{grp}"] = (nat_series == grp).astype(int)
 
-    # ── Physical ──────────────────────────────────────────────────────────────
-    out["height_cm"] = df["height_cm"].fillna(182.0)
-    out["weight_kg"] = df["weight_kg"].fillna(85.0)
+    # ── Physical — position-relative ─────────────────────────────────────────
+    # Normalize height and weight as deviation from position median so the model
+    # learns body-type signal relative to positional expectations rather than
+    # absolute size. A 6'4" center is expected; a 6'4" winger is notable.
+    pos_for_phys = df["position"].fillna("").str.split("/").str[0].str.upper()
+    h_raw = df["height_cm"].fillna(182.0)
+    w_raw = df["weight_kg"].fillna(85.0)
+    pos_h_med = pos_for_phys.map(h_raw.groupby(pos_for_phys).median()).fillna(182.0)
+    pos_w_med = pos_for_phys.map(w_raw.groupby(pos_for_phys).median()).fillna(85.0)
+    out["height_norm"] = (h_raw - pos_h_med).astype(float)
+    out["weight_norm"] = (w_raw - pos_w_med).astype(float)
 
     # ── League one-hot ────────────────────────────────────────────────────────
     # Use infer_league_key() to map each row to one of 5 named buckets.
@@ -389,25 +382,21 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # 0.5 = neutral (average quality at position); overridden dynamically at inference
     out["pos_quality_rank_norm"]  = df.get("pos_quality_rank_norm",  pd.Series(0.5,  index=df.index)).fillna(0.5).astype(float)
 
-    # ── Draft round ───────────────────────────────────────────────────────────
-    # Encoded as integer (1-7). Lets the model learn round-specific dynamics:
-    # round 1 picks are BPA/elite, round 7 picks are developmental gambles.
-    out["draft_round"] = df.get("draft_round", pd.Series(1, index=df.index)).fillna(1).astype(int)
-
     # ── Season-over-season production ─────────────────────────────────────────
     # gp_pre_draft: sample size signal — 1.2 PPG over 10 games ≠ 1.2 PPG over 60
     out["gp_pre_draft"]    = df.get("gp_pre_draft",    pd.Series(30,  index=df.index)).fillna(30).astype(float)
-    # ppg_prev_season: production two seasons before draft (None = first major-league year)
-    ppg_prev_raw           = df.get("ppg_prev_season", pd.Series(dtype=float))
-    ppg_prev_raw           = ppg_prev_raw.reindex(df.index)
+    # ppg_prev_season: raw prior-season production (0 when unavailable)
+    ppg_prev_raw           = df.get("ppg_prev_season", pd.Series(dtype=float)).reindex(df.index)
     out["ppg_prev_season"] = ppg_prev_raw.fillna(0.0).astype(float)
-    # ppg_trend: positive = improving, negative = declining, 0 = no prior season data
-    out["ppg_trend"]       = (out["points_per_game"] - out["ppg_prev_season"]).where(
-        ppg_prev_raw.notna(), 0.0
-    ).astype(float)
-    # has_prev_season: 1 = second+ major-league year (trend is meaningful),
-    # 0 = first year (ppg_trend is 0 by convention, not actual stability)
+    # has_prev_season: 1 = second+ major-league year (prior season data exists)
     out["has_prev_season"] = ppg_prev_raw.notna().astype(int)
+
+    # ── Draft round one-hot ───────────────────────────────────────────────────
+    # One-hot instead of integer: round 1 and round 4 are categorically different.
+    # Integer encoding implies a false ordinal relationship.
+    round_series = df.get("draft_round", pd.Series(1, index=df.index)).fillna(1).astype(int)
+    for r in DRAFT_ROUNDS:
+        out[f"round_{r}"] = (round_series == r).astype(int)
 
     return out[FEATURE_COLS]
 
@@ -507,17 +496,14 @@ def _compute_predraft_quality(year_picks: list) -> dict[int, float]:
             for within_rank, p in enumerate(sorted_players, start=1):
                 result[p.id] = _css_norm_within_list(within_rank, list_size)
 
-    # Round-position fallback for picks without CSS rank
+    # Unranked players: CSS deliberately excluded them, so they should score below
+    # any ranked player. A fixed penalty (0.15) reflects "not on the board" rather
+    # than a neutral 0.5 or a position-within-round proxy that rewarded early picks.
+    # Using a small positive value (not 0.0) preserves the ability to distinguish
+    # unranked players with strong PPG from those with weak PPG via other features.
     missing = [p for p in year_picks if p.id not in result]
-    if missing:
-        by_round: dict[int, list] = {}
-        for p in missing:
-            by_round.setdefault(p.round, []).append(p)
-        for round_picks in by_round.values():
-            sorted_picks = sorted(round_picks, key=lambda p: p.overall_pick)
-            n = len(sorted_picks)
-            for i, p in enumerate(sorted_picks):
-                result[p.id] = (n - i) / n
+    for p in missing:
+        result[p.id] = 0.15
 
     return result
 

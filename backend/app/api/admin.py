@@ -53,7 +53,7 @@ async def run_ingestion(background_tasks: BackgroundTasks):
 
 @router.post("/seed-prospects")
 async def seed_prospects(force: bool = False, db: Session = Depends(get_db)):
-    """Seed the 2025 draft prospect table from the NHL Records API."""
+    """Seed the normalized prospects table from the NHL Records API."""
     from app.ingestion.nhl_api import seed_2025_prospects
     count = seed_2025_prospects(db, force=force)
     return {"status": "ok", "prospects_seeded": count}
@@ -78,8 +78,8 @@ async def compute_tendencies(db: Session = Depends(get_db)):
 @router.post("/fetch-prospect-stats")
 async def fetch_prospect_stats(background_tasks: BackgroundTasks):
     """
-    Fetch current-season stats for all 2025 prospects with an nhl_player_id.
-    Populates points_per_game, goals, assists used as ML features.
+    Fetch current-season stats for active prospects with an nhl_player_id.
+    Populates points_per_game, goals, assists, and normalized player season stats.
     """
     def _run():
         from app.database import SessionLocal
@@ -122,8 +122,8 @@ async def fetch_historical_stats(background_tasks: BackgroundTasks):
 @router.post("/ingest/stats")
 async def ingest_live_stats(background_tasks: BackgroundTasks):
     """
-    Fetch live pre-draft stats from the NHL API for all 2025 prospects with a
-    known nhl_player_id and persist to prospect_stat_history + update prospects_2025.
+    Fetch live pre-draft stats from the NHL API for active prospects with a
+    known nhl_player_id and persist to prospect_stat_history + update prospects.
 
     This is the same action triggered by the daily EventBridge CronJob → Lambda.
     Use this for manual on-demand refreshes.

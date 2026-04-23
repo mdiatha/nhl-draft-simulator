@@ -16,8 +16,15 @@ from sqlalchemy.orm import Session
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.database import SessionLocal
-from app.models import Team, GeneralManager, DraftPickHistorical, LotteryOdds, IngestionRun
+from app.models import Team, GeneralManager, DraftPickHistorical, LotteryOdds, IngestionRun, Player, Prospect
 from app.constants import DRAFT_YEAR, STANDINGS_DATE, LOTTERY_ODDS, get_league_tier
+from app.ingestion.normalized import (
+    ensure_draft_class,
+    sync_prospect,
+    upsert_player,
+    upsert_player_season_stat,
+    upsert_prospect_ranking,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -238,6 +245,19 @@ def fetch_draft_history(db: Session, start_year: int = 2000, end_year: int = 202
                     draft_league_tier=tier,
                     nhl_player_id=pick.get("playerId"),
                 )
+                player = upsert_player(
+                    db,
+                    full_name=player_name,
+                    nhl_player_id=pick.get("playerId"),
+                    birth_country=pick.get("countryCode"),
+                    position=pick.get("position"),
+                    height_cm=height_cm,
+                    weight_kg=weight_kg,
+                    draft_year=year,
+                    draft_round=pick.get("roundNumber", 0),
+                    draft_overall=overall_pick_num,
+                )
+                pick_obj.player_id = player.id
                 db.add(pick_obj)
                 total += 1
 
@@ -341,14 +361,12 @@ def fetch_lottery_standings(db: Session) -> list[dict]:
 
 def seed_2026_prospects_from_json(db: Session, force: bool = False) -> int:
     """
-    Seed the prospects_2025 table with the 2026 draft class from the bundled
+    Seed the prospects table with the 2026 draft class from the bundled
     prospects_2026.json file (CSS/EliteProspects consensus rankings).
     Clears existing data when force=True.
     """
-    from app.models import Prospect2025
-
-    if not force and db.query(Prospect2025).count() > 0:
-        logger.info("prospects_2025 already has data, skipping 2026 seed (pass force=True to overwrite).")
+    if not force and db.query(Prospect).count() > 0:
+        logger.info("prospects already has data, skipping 2026 seed (pass force=True to overwrite).")
         return 0
 
     json_path = os.path.join(os.path.dirname(__file__), "prospects_2026.json")
@@ -360,15 +378,18 @@ def seed_2026_prospects_from_json(db: Session, force: bool = False) -> int:
         return 0
 
     if force:
-        db.query(Prospect2025).delete()
+        db.query(Prospect).delete()
         db.flush()
 
+    ensure_draft_class(db, DRAFT_YEAR)
     count = 0
     for p in prospects_data:
         league_name = p.get("draft_league") or ""
         tier, _region = get_league_tier(league_name)
-        prospect = Prospect2025(
-            name=p["name"],
+        prospect = sync_prospect(
+            db,
+            draft_year=DRAFT_YEAR,
+            full_name=p["name"],
             position=p.get("position", "F"),
             nationality=p.get("nationality"),
             height_cm=p.get("height_cm"),
@@ -384,7 +405,14 @@ def seed_2026_prospects_from_json(db: Session, force: bool = False) -> int:
             points_per_game=p.get("points_per_game"),
             age_at_draft=p.get("age_at_draft"),
         )
-        db.add(prospect)
+        upsert_prospect_ranking(
+            db,
+            prospect=prospect,
+            source="seeded_consensus",
+            ranking_type="pre_draft",
+            category=p.get("css_category"),
+            rank=p.get("css_ranking"),
+        )
         count += 1
 
     db.commit()
@@ -394,15 +422,13 @@ def seed_2026_prospects_from_json(db: Session, force: bool = False) -> int:
 
 def seed_2025_prospects(db: Session, force: bool = False) -> int:
     """
-    Seed the prospects_2025 table by fetching the 2025 draft class from the
+    Seed the prospects table by fetching the 2025 draft class from the
     NHL Records API (records.nhl.com/site/api/draft?cayenneExp=draftYear=2025).
     Returns the number of prospects inserted.
     Skips if records already exist (unless force=True).
     """
-    from app.models import Prospect2025
-
-    if not force and db.query(Prospect2025).count() > 0:
-        logger.info("prospects_2025 already seeded, skipping.")
+    if not force and db.query(Prospect).count() > 0:
+        logger.info("prospects already seeded, skipping.")
         return 0
 
     logger.info("Fetching 2025 draft class from NHL Records API...")
@@ -422,9 +448,10 @@ def seed_2025_prospects(db: Session, force: bool = False) -> int:
         return 0
 
     if force:
-        db.query(Prospect2025).delete()
+        db.query(Prospect).delete()
         db.flush()
 
+    ensure_draft_class(db, 2025)
     count = 0
     for pick in picks:
         player_name = f"{pick.get('firstName', '')} {pick.get('lastName', '')}".strip()
@@ -459,8 +486,10 @@ def seed_2025_prospects(db: Session, force: bool = False) -> int:
         age_in_days = pick.get("ageInDays")
         age_at_draft = round(age_in_days / 365.25, 2) if age_in_days else None
 
-        prospect = Prospect2025(
-            name=player_name,
+        prospect = sync_prospect(
+            db,
+            draft_year=2025,
+            full_name=player_name,
             position=position,
             nationality=pick.get("countryCode"),
             height_cm=height_cm,
@@ -477,30 +506,35 @@ def seed_2025_prospects(db: Session, force: bool = False) -> int:
             age_at_draft=age_at_draft,
             nhl_player_id=pick.get("playerId"),
         )
-        db.add(prospect)
+        upsert_prospect_ranking(
+            db,
+            prospect=prospect,
+            source="nhl_records",
+            ranking_type="draft_board",
+            category=css_cat,
+            rank=overall,
+        )
         count += 1
 
     db.commit()
-    logger.info(f"Seeded {count} prospects into prospects_2025 from NHL Records API")
+    logger.info(f"Seeded {count} prospects into prospects from NHL Records API")
     return count
 
 
 def fetch_prospect_stats(db: Session) -> int:
     """
-    For every Prospect2025 with an nhl_player_id, fetch their most recent
+    For every Prospect with an nhl_player_id, fetch their most recent
     major-league season stats from the NHL player landing API and populate
     games_played, goals, assists, points, points_per_game.
     Returns the number of prospects updated.
     """
-    from app.models import Prospect2025
-
     MAJOR_LEAGUES = {
         "OHL", "WHL", "QMJHL", "SHL", "LIIGA", "KHL", "NLA",
         "NCAA", "USHL", "AHL", "EXTRALIGA", "MESTIS", "ALLSVENSKAN",
     }
 
-    prospects = db.query(Prospect2025).filter(
-        Prospect2025.nhl_player_id.isnot(None)
+    prospects = db.query(Prospect).filter(
+        Prospect.nhl_player_id.isnot(None)
     ).all()
 
     updated = 0
@@ -555,6 +589,25 @@ def fetch_prospect_stats(db: Session) -> int:
                 prospect.ppg_prev_season = round(pts_prev / gp_prev, 2) if gp_prev > 0 else 0.0
 
             if best or prev:
+                if prospect.player_id and best:
+                    player = db.query(Player).filter(Player.id == prospect.player_id).first()
+                    if player is not None:
+                        upsert_player_season_stat(
+                            db,
+                            player=player,
+                            season_year_start=DRAFT_YEAR - 1,
+                            season_year_end=DRAFT_YEAR,
+                            league=best.get("leagueAbbrev") if best else prospect.draft_league,
+                            games_played=prospect.games_played,
+                            goals=prospect.goals,
+                            assists=prospect.assists,
+                            points=prospect.points,
+                            points_per_game=prospect.points_per_game,
+                            season_type="regular",
+                            source="nhl_player_landing",
+                            as_of_date=date.today(),
+                            raw_payload=best,
+                        )
                 updated += 1
 
     db.commit()
@@ -649,6 +702,26 @@ def fetch_historical_stats(db: Session) -> int:
                     pick.age_at_draft = round((draft_date - bd).days / 365.25, 2)
                 except Exception:
                     pass
+
+            if pick.player_id and best:
+                player = db.query(Player).filter(Player.id == pick.player_id).first()
+                if player is not None:
+                    upsert_player_season_stat(
+                        db,
+                        player=player,
+                        season_year_start=pick.year - 1,
+                        season_year_end=pick.year,
+                        league=best.get("leagueAbbrev") if best else pick.draft_league,
+                        games_played=pick.gp_pre_draft,
+                        goals=best.get("goals"),
+                        assists=best.get("assists"),
+                        points=(best.get("goals") or 0) + (best.get("assists") or 0) if best else None,
+                        points_per_game=pick.points_per_game,
+                        season_type="pre_draft",
+                        source="nhl_player_landing",
+                        as_of_date=date_type(pick.year, 6, 28),
+                        raw_payload=best,
+                    )
 
             updated += 1
             if updated % 100 == 0:

@@ -469,12 +469,12 @@ def _get_gm_profile(team_name: str, db: Session) -> str:
 
 
 def _get_top_prospects(position: str, limit: int, db: Session) -> str:
-    from app.models import Prospect2025
+    from app.models import Prospect
 
     limit = min(int(limit), 25)
-    q = db.query(Prospect2025).order_by(Prospect2025.css_ranking.nullslast())
+    q = db.query(Prospect).order_by(Prospect.css_ranking.nullslast())
     if position.lower() != "all":
-        q = q.filter(Prospect2025.position == position.upper())
+        q = q.filter(Prospect.position == position.upper())
 
     prospects = q.limit(limit).all()
     if not prospects:
@@ -498,7 +498,7 @@ def _get_top_prospects(position: str, limit: int, db: Session) -> str:
 
 
 def _get_team_needs(team_name: str, db: Session) -> str:
-    from app.models import Team, GeneralManager, GMTendencyProfile, Prospect2025
+    from app.models import Team, GeneralManager, GMTendencyProfile, Prospect
     from collections import Counter
 
     team = _find_team(team_name, db)
@@ -522,7 +522,7 @@ def _get_team_needs(team_name: str, db: Session) -> str:
     pos_weights = profile.position_weights if profile else {}
 
     # Draft class availability: what share of the 2026 class is each position?
-    all_prospects = db.query(Prospect2025.position).all()
+    all_prospects = db.query(Prospect.position).all()
     total = len(all_prospects)
     class_counts: Counter = Counter(p.position or "F" for p in all_prospects)
     class_rates = {pos: count / total for pos, count in class_counts.items()} if total else {}
@@ -664,7 +664,7 @@ def _get_draft_history(team_name: str, year: int | None, db: Session) -> str:
 
 
 def _get_ml_ranking(prospect_name: str, team_name: Optional[str], pick_slot: int, db: Session) -> str:
-    from app.models import Prospect2025, GeneralManager, GMTendencyProfile
+    from app.models import Prospect, GeneralManager, GMTendencyProfile
     from app.ml.registry import registry
     from app.ml.predict import score_single_prospect
 
@@ -672,9 +672,9 @@ def _get_ml_ranking(prospect_name: str, team_name: Optional[str], pick_slot: int
         return json.dumps({"error": "ML model not loaded — run POST /api/ml/reload first."})
 
     prospect = (
-        db.query(Prospect2025)
-        .filter(Prospect2025.name.ilike(f"%{prospect_name}%"))
-        .order_by(Prospect2025.css_ranking.nullslast())
+        db.query(Prospect)
+        .filter(Prospect.name.ilike(f"%{prospect_name}%"))
+        .order_by(Prospect.css_ranking.nullslast())
         .first()
     )
     if not prospect:
@@ -733,13 +733,13 @@ def _get_ml_ranking(prospect_name: str, team_name: Optional[str], pick_slot: int
 
 
 def _compare_prospects(prospect_a: str, prospect_b: str, db: Session) -> str:
-    from app.models import Prospect2025
+    from app.models import Prospect
 
     def _find(name: str):
         return (
-            db.query(Prospect2025)
-            .filter(Prospect2025.name.ilike(f"%{name}%"))
-            .order_by(Prospect2025.css_ranking.nullslast())
+            db.query(Prospect)
+            .filter(Prospect.name.ilike(f"%{name}%"))
+            .order_by(Prospect.css_ranking.nullslast())
             .first()
         )
 
@@ -777,13 +777,13 @@ def _compare_prospects(prospect_a: str, prospect_b: str, db: Session) -> str:
 
 
 def _get_prospect_detail(prospect_name: str, db: Session) -> str:
-    from app.models import Prospect2025
+    from app.models import Prospect
     from app.models.prospect_stat_history import ProspectStatHistory
 
     prospect = (
-        db.query(Prospect2025)
-        .filter(Prospect2025.name.ilike(f"%{prospect_name}%"))
-        .order_by(Prospect2025.css_ranking.nullslast())
+        db.query(Prospect)
+        .filter(Prospect.name.ilike(f"%{prospect_name}%"))
+        .order_by(Prospect.css_ranking.nullslast())
         .first()
     )
     if not prospect:
@@ -829,7 +829,7 @@ def _get_nhl_comp(prospect_name: str, db: Session) -> str:
     Find the current NHL players who play most similarly to a draft prospect.
 
     Approach:
-      1. Look up the prospect in prospects_2025
+      1. Look up the prospect in prospects
       2. Build a richer prospect profile using factual, style, and trend chunks
       3. Embed the combined description via voyage-3-lite
       4. Vector search against 'nhl_player' docs in scout_embeddings
@@ -837,14 +837,14 @@ def _get_nhl_comp(prospect_name: str, db: Session) -> str:
 
     Requires: POST /api/admin/ingest-nhl-players (then /api/agent/index) to have been run.
     """
-    from app.models import Prospect2025, ProspectStatHistory
+    from app.models import Prospect, ProspectStatHistory
     from app.agent import store
     from app.agent.embeddings import embed_text, prospect_to_text
 
     prospect = (
-        db.query(Prospect2025)
-        .filter(Prospect2025.name.ilike(f"%{prospect_name}%"))
-        .order_by(Prospect2025.css_ranking.nullslast())
+        db.query(Prospect)
+        .filter(Prospect.name.ilike(f"%{prospect_name}%"))
+        .order_by(Prospect.css_ranking.nullslast())
         .first()
     )
     if not prospect:
@@ -900,20 +900,20 @@ def _get_nhl_comp(prospect_name: str, db: Session) -> str:
 
 
 def _search_prospects(query: str, db: Session) -> str:
-    from app.models import Prospect2025
+    from app.models import Prospect
     from sqlalchemy import or_
 
     q = query.strip()
     prospects = (
-        db.query(Prospect2025)
+        db.query(Prospect)
         .filter(
             or_(
-                Prospect2025.name.ilike(f"%{q}%"),
-                Prospect2025.draft_league.ilike(f"%{q}%"),
-                Prospect2025.nationality.ilike(f"%{q}%"),
+                Prospect.name.ilike(f"%{q}%"),
+                Prospect.draft_league.ilike(f"%{q}%"),
+                Prospect.nationality.ilike(f"%{q}%"),
             )
         )
-        .order_by(Prospect2025.css_ranking.nullslast())
+        .order_by(Prospect.css_ranking.nullslast())
         .limit(10)
         .all()
     )

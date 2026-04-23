@@ -25,7 +25,7 @@ def _make_prospect(
     height_cm=185,
     weight_kg=88,
 ):
-    """Build a minimal mock Prospect2025 object."""
+    """Build a minimal mock Prospect object."""
     p = MagicMock()
     p.id = id
     p.position = position

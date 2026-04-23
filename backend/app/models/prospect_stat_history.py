@@ -18,7 +18,7 @@ class ProspectStatHistory(Base):
     __tablename__ = "prospect_stat_history"
 
     id              = Column(Integer, primary_key=True)
-    prospect_id     = Column(Integer, ForeignKey("prospects_2025.id", ondelete="CASCADE"), nullable=False, index=True)
+    prospect_id     = Column(Integer, ForeignKey("prospects.id", ondelete="CASCADE"), nullable=False, index=True)
     fetched_at      = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc))
     season_type     = Column(String(20),  nullable=True)   # pre_draft | regular | playoffs
     league          = Column(String(100), nullable=True)
@@ -30,7 +30,7 @@ class ProspectStatHistory(Base):
     source_url      = Column(String(500), nullable=True)
     raw_payload     = Column(JSONB,       nullable=True)
 
-    prospect = relationship("Prospect2025", back_populates="stat_history")
+    prospect = relationship("Prospect", back_populates="stat_history")
 
     def __repr__(self) -> str:
         return f"<ProspectStatHistory prospect_id={self.prospect_id} ppg={self.points_per_game} fetched={self.fetched_at}>"

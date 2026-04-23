@@ -250,7 +250,7 @@ def build_index(db) -> int:
     from sqlalchemy.orm import Session
     from sqlalchemy import text
     from app.models import (
-        GMTendencyProfile, GeneralManager, Team, Prospect2025,
+        GMTendencyProfile, GeneralManager, Team, Prospect,
         DraftPickHistorical, ProspectStatHistory,
     )
     from app.agent.store import upsert_embedding
@@ -272,7 +272,7 @@ def build_index(db) -> int:
         count += 1
 
     # ── Prospects: one rich document per prospect ────────────────────────────
-    # Clear all legacy prospect chunk types before reinserting.
+    # Clear existing prospect chunk types before reinserting fresh documents.
     db.execute(text("""
         DELETE FROM scout_embeddings
         WHERE doc_type IN (
@@ -285,8 +285,8 @@ def build_index(db) -> int:
     """))
 
     prospects = (
-        db.query(Prospect2025)
-        .order_by(Prospect2025.css_ranking.nullslast())
+        db.query(Prospect)
+        .order_by(Prospect.css_ranking.nullslast())
         .limit(200)
         .all()
     )

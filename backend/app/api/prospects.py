@@ -4,7 +4,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.models import Prospect2025
+from app.models import Prospect
 
 router = APIRouter(prefix="/draft", tags=["draft"])
 
@@ -22,26 +22,26 @@ async def list_prospects(
     offset: int = Query(default=0, ge=0),
     db: Session = Depends(get_db),
 ):
-    q = db.query(Prospect2025)
+    q = db.query(Prospect)
     if position:
         pos = position.upper()
         if not _VALID_POSITION.match(pos):
             raise HTTPException(status_code=422, detail=f"Invalid position: {position!r}")
-        q = q.filter(Prospect2025.position == pos)
+        q = q.filter(Prospect.position == pos)
     if css_category:
-        q = q.filter(Prospect2025.css_category == css_category)
+        q = q.filter(Prospect.css_category == css_category)
     if nationality:
         nat = nationality.upper()
         if not _VALID_NATIONALITY.match(nat):
             raise HTTPException(status_code=422, detail=f"Invalid nationality: {nationality!r}")
-        q = q.filter(Prospect2025.nationality == nat)
+        q = q.filter(Prospect.nationality == nat)
     if search:
         # Use explicit string concatenation — SQLAlchemy parameterises the bind value,
         # preventing injection even with special characters in the search term.
-        q = q.filter(Prospect2025.name.ilike("%" + search + "%"))
+        q = q.filter(Prospect.name.ilike("%" + search + "%"))
 
     total = q.count()
-    prospects = q.order_by(Prospect2025.css_ranking.nullslast()).offset(offset).limit(limit).all()
+    prospects = q.order_by(Prospect.css_ranking.nullslast()).offset(offset).limit(limit).all()
 
     return {
         "total": total,

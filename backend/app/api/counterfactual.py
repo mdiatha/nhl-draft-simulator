@@ -26,7 +26,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Team, GeneralManager, GMTendencyProfile, Prospect2025
+from app.models import Team, GeneralManager, GMTendencyProfile, Prospect
 from app.ml.predict import score_pool_for_team, compute_pool_stats
 from app.ml.registry import registry
 
@@ -84,8 +84,8 @@ async def counterfactual_swap(body: CounterfactualRequest, db: Session = Depends
 
     # ── Load shared data once ─────────────────────────────────────────────────
     prospects = (
-        db.query(Prospect2025)
-        .order_by(Prospect2025.css_ranking.nullslast())
+        db.query(Prospect)
+        .order_by(Prospect.css_ranking.nullslast())
         .all()
     )
     if not prospects:

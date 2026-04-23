@@ -38,10 +38,11 @@ It runs a weighted draft lottery, simulates all 7 rounds pick-by-pick using an M
 ```
 Browser
   └── CloudFront → S3  (React SPA, hashed asset caching)
-  └── EC2 (FastAPI behind Nginx)
+  └── EC2 (FastAPI behind Nginx + Docker Compose)
         ├── PostgreSQL 16 + pgvector  (main data + vector embeddings)
         ├── Redis                      (simulation cache, SSE pub/sub)
-        └── Anthropic API              (Claude 3 for Scout + draft analysis)
+        ├── Ollama                     (local nomic-embed-text for RAG)
+        └── Anthropic API              (Claude for Scout + draft analysis)
 
 EventBridge (daily cron)
   └── Lambda → POST /api/admin/ingest  (standings, prospects, stats refresh)
@@ -105,17 +106,20 @@ The backend is a single FastAPI application (~6,500 lines across APIs, ML, agent
 | `team` | 32 NHL teams with abbreviation and conference |
 | `general_manager` | Current GM per team with start date (hand-maintained) |
 | `draft_pick_historical` | ~25,000 picks from 2000–2024 with CSS rank, PPG, position |
-| `prospect_2025` | Current draft class (2026 class stored here) with CSS rank, stats |
+| `players` | Canonical player record with NHL player ID, name parts, birth info, draft metadata (migration 017) |
+| `draft_classes` | Draft context (year) for point-in-time modeling (migration 017) |
+| `prospects` | Current draft class prospects, foreign-keyed to `players` and `draft_classes` (migration 017) |
+| `prospect_rankings` | CSS ranking per prospect per draft class (migration 017) |
+| `player_season_stats` | Multi-season stats per player (migration 017) |
 | `lottery_odds` | Per-team lottery probability and combination counts |
 | `gm_tendency_profile` | Computed tendency weights and archetype per GM |
-| `prospect_stat_history` | Multi-season pre-draft stats per prospect |
 | `prospect_features` | Materialized feature rows for inference speed |
 | `scout_embeddings` | 768-dim pgvector embeddings (nomic-embed-text) |
 | `scout_conversations` | Persistent session chat history |
 | `ingestion_run` | Pipeline checkpointing with step-level metadata |
 | `prospect_stat_snapshots` | Point-in-time stat snapshots for trend features |
 
-Schema evolved through 17 migrations including: native `vector(768)` type with IVFFlat cosine index (migration 011/015), prospect feature store (012), missing index coverage (013), stat snapshots for trend features (014), pipeline step tracking (016).
+Schema evolved through 17 migrations including: native `vector(768)` type with IVFFlat cosine index (migrations 011/015), prospect feature store (012), missing index coverage (013), stat snapshots for trend features (014), pipeline step tracking (016), and schema normalization separating players, prospects, draft classes, and rankings (017).
 
 ---
 
@@ -174,8 +178,8 @@ This is superior to binary classification (`was_picked=1/0`) because:
 Algorithm:     XGBoost LambdaMART (objective: rank:ndcg)
 Features:      34 engineered features
 Training data: Historical picks 2008–2024 (CSS era), ~92,000 rows
-Train split:   ≤ 2020 (eval mode), all data (production mode)
-Val split:     ≥ 2021
+Train split:   ≤ 2022 (eval mode), all data (production mode)
+Val split:     ≥ 2023
 Early stop:    25 rounds on NDCG@1
 Hyperparams:   learning_rate=0.05, max_depth=5, subsample=0.7, colsample_bytree=0.75
 ```
@@ -202,6 +206,7 @@ Hyperparams:   learning_rate=0.05, max_depth=5, subsample=0.7, colsample_bytree=
 ### Evaluation
 
 - **Metric**: NDCG@1 — did the model rank the actual pick first in its group?
+- **Walk-forward CV**: 9 folds (2014→2015 through 2022→2023) to compute a reliable held-out NDCG@1 estimate before final training
 - **Temporal split** — never train on future years, always val on held-out future draft classes
 - **Multi-year backtests** — repeated temporal evaluation across 2021–2024 draft classes
 - **Baselines**: CSS best-available, PPG best-available, uniform random
@@ -342,6 +347,10 @@ This answers questions like: "What would Toronto have drafted if they had pick #
 - Feature store rows (materialized per-prospect features for inference)
 - Scout RAG index (embeddings rebuilt on demand)
 
+### Normalized Ingestion (Migration 017)
+
+The ingestion layer was refactored alongside the schema normalization in migration 017. `app/ingestion/normalized.py` provides `upsert_player()` and draft class management, ensuring that the same player appearing across multiple draft years is stored once in `players` and referenced by year-specific `prospects` rows. This enables point-in-time draft modeling and historical player tracking without duplicating player records.
+
 ### Resumability
 
 `PipelineCheckpointer` writes step metadata to `ingestion_run.pipeline_steps`. A partially-completed run (e.g., network failure mid-stats-fetch) resumes from the last successful step. This is essential for the stats fetch step which makes hundreds of individual NHL API calls.
@@ -446,6 +455,8 @@ Coverage gate: 70% minimum enforced in CI. Integration tests use `pgvector/pgvec
 
 **Single-EC2 over ECS+RDS**: ECS with a managed RDS instance costs ~$80/month at minimum. A single t3.medium with Docker Compose costs ~$20/month. For a non-production app, the complexity and cost of ECS+RDS is unjustified — the EC2 approach still provides a repeatable, container-managed deployment.
 
+**Normalized player schema (migration 017)**: The original flat `prospect_2025` table conflated player identity with draft-class context, making it impossible to track the same player across multiple draft years or store multi-season stats without duplication. Separating into `players`, `draft_classes`, `prospects`, `prospect_rankings`, and `player_season_stats` enables point-in-time modeling and cleaner historical analysis at the cost of additional join complexity.
+
 ---
 
 ## Current Limitations (Honest)
@@ -455,7 +466,7 @@ Coverage gate: 70% minimum enforced in CI. Integration tests use `pgvector/pgvec
 - **2026 prospect data is hand-curated.** The NHL API has no 2026 data. CSS rankings are bundled from the May 2026 published list and must be manually updated if rankings change.
 - **Ollama runs on the same EC2.** For the RAG layer to work in production, Ollama must be running on the instance. Semantic search silently degrades if it's down; keyword search continues working.
 - **GMs are hand-maintained.** `gms.json` must be updated when GMs are hired or fired. Stale entries produce tendency profiles attributed to the wrong person.
-- **Round 2–7 dynamics are simplified.** The same model that drives round-1 picks drives later rounds, but GM behavior in rounds 6–7 is more opportunistic and harder to model. The `draft_round` feature helps, but late-round picks have more unexplained variance.
+- **CSS rank is the dominant feature.** The model largely replicates the CSS board with team-specific adjustments. GM tendency features add signal at the margin, especially for GMs with strong positional preferences.
 
 ---
 
@@ -467,13 +478,13 @@ Coverage gate: 70% minimum enforced in CI. Integration tests use `pgvector/pgvec
 | ML pipeline | 7 | ~2,130 |
 | Agent + Scout | 9 | ~2,800 |
 | Engines | 2 | ~570 |
-| Ingestion | 5 | ~800 |
-| Models + DB | 3 | ~400 |
+| Ingestion | 6 | ~950 |
+| Models + DB | 8 | ~700 |
 | Frontend pages | 9 | ~2,500 |
 | Frontend components | 6 | ~600 |
 | Tests | 12 | ~1,200 |
 | Infrastructure (CDK) | 10 | ~800 |
-| **Total** | | **~17,000** |
+| **Total** | | **~17,000+** |
 
 ---
 
@@ -492,11 +503,12 @@ Coverage gate: 70% minimum enforced in CI. Integration tests use `pgvector/pgvec
 - Architected a hybrid RAG retrieval system combining pgvector cosine similarity on 768-dim Ollama embeddings with PostgreSQL BM25 (tsvector/ts_rank), fused via reciprocal-rank fusion — no external vector DB dependency
 - Built a Claude tool-use agent (10 DB-backed tools, parallel execution via asyncio.gather, circuit breaker, topic guardrail, session memory compression) that grounds every response in live application data
 - Implemented a resumable ingestion pipeline with step-level checkpointing, preventing full restarts after partial failures in multi-hundred-API-call stat fetch operations
+- Refactored the prospect data model (migration 017) from a flat single-class table to a normalized schema (`players`, `draft_classes`, `prospects`, `prospect_rankings`, `player_season_stats`) enabling point-in-time draft modeling and multi-year player tracking
 
 **Infrastructure / DevOps**
-- Deployed the full stack on AWS using CDK in TypeScript: CloudFront/S3 frontend, EC2 backend with Nginx + Docker Compose, EventBridge + Lambda daily ingestion trigger
+- Deployed the full stack on AWS using CDK in TypeScript: CloudFront/S3 frontend, single EC2 with Nginx + Docker Compose backend (migrated from ECS+RDS to cut monthly cost from ~$80 to ~$20), EventBridge + Lambda daily ingestion trigger
 - Built a GitHub Actions CI/CD pipeline with OIDC authentication (no long-lived AWS keys): linting, unit tests (70% coverage gate), integration tests via Testcontainers, Alembic migration regression checks, Docker build validation, ECR push, and CloudFront cache invalidation
-- Managed 17 Alembic migrations including native pgvector column type migration with IVFFlat cosine index and zero-downtime strategy
+- Managed 17 Alembic migrations including native pgvector column type migration with IVFFlat cosine index and a zero-downtime schema normalization separating player identity from draft-class context
 
 **Frontend**
 - Built a 9-page React + TypeScript SPA consuming server-sent event streams for live draft simulation and AI Scout chat, with Zustand state persisted across navigation and shareable URLs encoding seed + pick order

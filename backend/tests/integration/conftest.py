@@ -10,7 +10,6 @@ Requires Docker to be running.
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from app.database import Base
 
 PostgresContainer = pytest.importorskip(
     "testcontainers.postgres",
@@ -35,10 +34,20 @@ def pg_container():
 @pytest.fixture(scope="session")
 def db_engine(pg_container):
     """Create SQLAlchemy engine against the test container."""
+    import os
+    from alembic.config import Config
+    from alembic import command
+
     url = pg_container.get_connection_url()
-    # testcontainers returns postgresql+psycopg2://... format
     engine = create_engine(url)
-    Base.metadata.create_all(engine)
+
+    # Run migrations instead of create_all so the schema matches the migration
+    # chain exactly. create_all would create indexes from ORM models and then
+    # migration 017 would try to create the same indexes again → DuplicateTable.
+    alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "../../alembic.ini"))
+    alembic_cfg.set_main_option("sqlalchemy.url", url)
+    command.upgrade(alembic_cfg, "head")
+
     yield engine
     engine.dispose()
 

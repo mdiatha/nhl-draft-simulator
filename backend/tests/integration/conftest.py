@@ -44,8 +44,10 @@ def db_engine(pg_container):
     # Run migrations instead of create_all so the schema matches the migration
     # chain exactly. create_all would create indexes from ORM models and then
     # migration 017 would try to create the same indexes again → DuplicateTable.
+    # Set DATABASE_URL so alembic/env.py picks it up (set_main_option is
+    # overridden by env.py reading os.environ).
+    os.environ["DATABASE_URL"] = url
     alembic_cfg = Config(os.path.join(os.path.dirname(__file__), "../../alembic.ini"))
-    alembic_cfg.set_main_option("sqlalchemy.url", url)
     command.upgrade(alembic_cfg, "head")
 
     yield engine

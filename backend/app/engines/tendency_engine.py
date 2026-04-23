@@ -344,8 +344,6 @@ def classify_archetype(tendency: dict, gmm_result: dict | None = None) -> str:
             logger.warning("classify_archetype.gmm_failed error=%s — falling back to rules", exc)
 
     # ── Rule-based fallback ───────────────────────────────────────────────────
-    pos_w = tendency.get("position_weights", {})
-    nat_w = tendency.get("nationality_weights", {})
     eur_share, top2 = _tendency_to_vec(tendency)
 
     if top2 > 0.65:

@@ -84,8 +84,6 @@ def train(
         random_state=42,
         eval_metric="auc",
     )
-    rank_params = {**base_params, "n_estimators": 1500}
-
     def _make_groups(split_df: pd.DataFrame) -> np.ndarray:
         """
         Build the XGBoost group array: number of rows per query group.

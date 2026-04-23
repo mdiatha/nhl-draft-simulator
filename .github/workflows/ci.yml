@@ -41,7 +41,7 @@ jobs:
             --cov-fail-under=25
 
       - name: Upload coverage report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-report
@@ -78,7 +78,7 @@ jobs:
             --cov-report=xml:coverage_integration.xml
 
       - name: Upload integration coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: coverage-integration

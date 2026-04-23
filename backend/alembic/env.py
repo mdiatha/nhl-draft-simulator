@@ -32,7 +32,8 @@ target_metadata = Base.metadata
 
 
 def get_url():
-    return settings.DATABASE_URL
+    # Allow callers (e.g. integration test conftest) to override via set_main_option.
+    return config.get_main_option("sqlalchemy.url") or settings.DATABASE_URL
 
 
 def run_migrations_offline() -> None:

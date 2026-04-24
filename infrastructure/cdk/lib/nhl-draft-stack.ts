@@ -133,6 +133,7 @@ export class NhlDraftStack extends cdk.Stack {
       `SECRET_KEY=$(get_param /nhl-draft/secret_key)`,
       `ADMIN_API_KEY=$(get_param /nhl-draft/admin_api_key)`,
       `ANTHROPIC_API_KEY=$(get_param /nhl-draft/anthropic_api_key)`,
+      `AWS_S3_BUCKET=${modelBucket.bucketName}`,
       'EOF',
       'chown ec2-user:ec2-user /home/ec2-user/.env',
       '',
@@ -175,6 +176,16 @@ export class NhlDraftStack extends cdk.Stack {
       instanceId: instance.instanceId,
       tags: [{ key: 'Name', value: `${prefix}-eip` }],
     });
+
+    // ---- S3 model bucket -----------------------------------------------------
+    const modelBucket = new s3.Bucket(this, 'ModelBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      versioned: true,
+    });
+    cdk.Tags.of(modelBucket).add('Name', `${prefix}-models`);
+    modelBucket.grantReadWrite(instanceRole);
 
     // ---- S3 frontend bucket --------------------------------------------------
     const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {
@@ -324,6 +335,10 @@ export class NhlDraftStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'FrontendBucketName', {
       description: 'S3 bucket for frontend',
       value: frontendBucket.bucketName,
+    });
+    new cdk.CfnOutput(this, 'ModelBucketName', {
+      description: 'S3 bucket for ML models — set as AWS_S3_BUCKET secret in GitHub',
+      value: modelBucket.bucketName,
     });
     new cdk.CfnOutput(this, 'CloudfrontDistributionId', {
       description: 'CloudFront distribution ID',

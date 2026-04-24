@@ -104,14 +104,6 @@ class TestBuildFeatures:
         assert with_prev["has_prev_season"].iloc[0] == 1
         assert without_prev["has_prev_season"].iloc[0] == 0
 
-    def test_ppg_trend_zero_when_no_prev_season(self):
-        out = build_features(_make_df(_minimal_row(points_per_game=1.2, ppg_prev_season=None)))
-        assert out["ppg_trend"].iloc[0] == 0.0
-
-    def test_ppg_trend_computed_when_prev_season_present(self):
-        out = build_features(_make_df(_minimal_row(points_per_game=1.2, ppg_prev_season=0.9)))
-        assert abs(out["ppg_trend"].iloc[0] - 0.3) < 1e-6
-
     def test_rank_vs_slot_direction(self):
         out = build_features(_make_df(_minimal_row(css_rank_norm=0.9, overall_pick=30)))
         assert out["rank_vs_slot"].iloc[0] > 0

@@ -328,12 +328,11 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     # One-hot avoids the ordinal assumption baked into the old integer tier.
     if "draft_league" in df.columns:
         tier_col = "draft_league_tier" if "draft_league_tier" in df.columns else "league_tier"
-        league_key_series = df.apply(
-            lambda row: infer_league_key(
-                row.get("draft_league") or "",
-                row.get(tier_col),
-            ),
-            axis=1,
+        leagues = df["draft_league"].fillna("").tolist()
+        tiers = df[tier_col].tolist() if tier_col in df.columns else [None] * len(df)
+        league_key_series = pd.Series(
+            [infer_league_key(lg or "", t) for lg, t in zip(leagues, tiers)],
+            index=df.index,
         )
     else:
         league_key_series = pd.Series("tier2", index=df.index)

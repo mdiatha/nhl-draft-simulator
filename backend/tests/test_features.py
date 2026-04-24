@@ -200,13 +200,14 @@ class TestComputePredraftQuality:
         quality = _compute_predraft_quality(picks)
         assert quality[1] > quality[2] > quality[3]
 
-    def test_missing_css_falls_back_to_round_order(self):
+    def test_missing_css_gets_flat_penalty(self):
         picks = [
             self._make_pick(1, "C", 1.0, css_rank=None, round_num=2, overall_pick=33),
             self._make_pick(2, "C", 1.0, css_rank=None, round_num=2, overall_pick=34),
         ]
         quality = _compute_predraft_quality(picks)
-        assert quality[1] > quality[2]
+        assert quality[1] == 0.15
+        assert quality[2] == 0.15
 
     def test_all_picks_have_quality_score(self):
         picks = [self._make_pick(i, "C", 1.0, css_rank=i + 1, overall_pick=i + 1) for i in range(10)]

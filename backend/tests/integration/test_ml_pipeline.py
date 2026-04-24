@@ -244,14 +244,15 @@ class TestTrainAndPredict:
         import numpy as np
         assert np.isfinite(scores).all(), "All scores must be finite"
 
-    def test_train_final_mode_returns_nan_auc(self, fifty_pick_db):
-        """train(df, final=True) should return NaN AUC since there is no validation set."""
+    def test_train_final_mode_returns_numeric_auc(self, fifty_pick_db):
+        """train(df, final=True) returns CV NDCG@1 — final flag is a no-op kept for API compat."""
         df = build_training_dataset(fifty_pick_db)
         model, auc = train(df, final=True)
 
-        assert math.isnan(auc), (
-            "Production mode (final=True) must return NaN AUC — no held-out val set"
+        assert not math.isnan(auc), (
+            "train() always runs eval phase and returns CV NDCG@1 regardless of final flag"
         )
+        assert 0.0 <= auc <= 1.0, f"AUC must be in [0, 1], got {auc}"
 
 
 class TestTrainingDataQualityGate:

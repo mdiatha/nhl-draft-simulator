@@ -96,6 +96,17 @@ export class NhlDraftStack extends cdk.Stack {
     sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(80), 'HTTP');
     sg.addIngressRule(ec2.Peer.anyIpv4(), ec2.Port.tcp(443), 'HTTPS');
 
+    // ---- S3 model bucket -----------------------------------------------------
+    // Declared before user-data so bucketName token is available in the boot script.
+    const modelBucket = new s3.Bucket(this, 'ModelBucket', {
+      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
+      encryption: s3.BucketEncryption.S3_MANAGED,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+      versioned: true,
+    });
+    cdk.Tags.of(modelBucket).add('Name', `${prefix}-models`);
+    modelBucket.grantReadWrite(instanceRole);
+
     // ---- User-data bootstrap script -------------------------------------------
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
@@ -176,16 +187,6 @@ export class NhlDraftStack extends cdk.Stack {
       instanceId: instance.instanceId,
       tags: [{ key: 'Name', value: `${prefix}-eip` }],
     });
-
-    // ---- S3 model bucket -----------------------------------------------------
-    const modelBucket = new s3.Bucket(this, 'ModelBucket', {
-      blockPublicAccess: s3.BlockPublicAccess.BLOCK_ALL,
-      encryption: s3.BucketEncryption.S3_MANAGED,
-      removalPolicy: cdk.RemovalPolicy.RETAIN,
-      versioned: true,
-    });
-    cdk.Tags.of(modelBucket).add('Name', `${prefix}-models`);
-    modelBucket.grantReadWrite(instanceRole);
 
     // ---- S3 frontend bucket --------------------------------------------------
     const frontendBucket = new s3.Bucket(this, 'FrontendBucket', {

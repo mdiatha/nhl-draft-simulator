@@ -240,6 +240,19 @@ jobs:
           docker push "$ECR_REGISTRY/nhl-draft-api:${{ github.sha }}"
           docker push "$ECR_REGISTRY/nhl-draft-api:latest"
 
+      - name: Upload model to S3 (main only)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        run: |
+          if [ -f backend/app/ml/model.pkl ]; then
+            aws s3 cp backend/app/ml/model.pkl \
+              s3://${{ secrets.AWS_S3_BUCKET }}/models/latest/model.pkl
+            aws s3 cp backend/app/ml/model_meta.json \
+              s3://${{ secrets.AWS_S3_BUCKET }}/models/latest/model_meta.json
+            echo "Model uploaded to S3"
+          else
+            echo "No model.pkl found in repo — skipping upload"
+          fi
+
   # - Deploy to EC2 (main branch only) -
   # Architecture: single EC2 running Docker Compose (API + Postgres + Redis + Ollama).
   # Deploy = pull latest ECR image on the instance, run migrations, restart the api container.

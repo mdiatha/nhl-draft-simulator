@@ -30,7 +30,7 @@ import numpy as np
 import pandas as pd
 from xgboost import XGBRanker
 
-from app.ml.features import FEATURE_COLS, NEGATIVE_WINDOW, build_features, build_training_dataset
+from app.ml.features import FEATURE_COLS, build_features, build_training_dataset
 
 logger = logging.getLogger(__name__)
 
@@ -65,24 +65,21 @@ def train(
       compatibility but no longer skips eval.
     """
     # ── Ranker base params ────────────────────────────────────────────────────
-    # rank:pairwise (LambdaMART) directly optimizes pairwise comparisons between
-    # the positive and each negative, matching our data construction exactly.
-    # scale_pos_weight corrects the 1:31 class imbalance — without it the gradient
-    # signal from the single positive is drowned out by 31 negatives per group.
-    n_neg = NEGATIVE_WINDOW  # 31 negatives per positive
+    # rank:ndcg with @1 cutoff directly optimizes the metric we report, and
+    # gives more shaped gradients than pairwise for top-of-list problems
+    # (which is exactly our task — predict THE pick, not rank the whole pool).
     base_params = dict(
-        objective="rank:pairwise",
-        learning_rate=0.05,
-        max_depth=5,
-        subsample=0.7,
-        colsample_bytree=0.75,
-        min_child_weight=5,
-        gamma=0.5,
-        reg_alpha=0.1,
+        objective="rank:ndcg",
+        eval_metric="ndcg@1",
+        learning_rate=0.03,
+        max_depth=6,
+        subsample=0.85,
+        colsample_bytree=0.85,
+        min_child_weight=2,
+        gamma=0.0,
+        reg_alpha=0.0,
         reg_lambda=1.0,
-        scale_pos_weight=n_neg,
         random_state=42,
-        eval_metric="auc",
     )
     def _make_groups(split_df: pd.DataFrame) -> np.ndarray:
         """
@@ -146,11 +143,18 @@ def train(
             Xtr = build_features(fold_train)
             Xvl = build_features(fold_val)
             ytr = fold_train[target_col].astype(int)
+            yvl = fold_val[target_col].astype(int)
             gtr = _make_groups(fold_train)
+            gvl = _make_groups(fold_val)
             wtr = _group_weights(fold_train)
 
-            fold_model = XGBRanker(**{**base_params, "n_estimators": 500})
-            fold_model.fit(Xtr, ytr, group=gtr, sample_weight=wtr, verbose=False)
+            fold_model = XGBRanker(**{**base_params, "n_estimators": 2000, "early_stopping_rounds": 100})
+            fold_model.fit(
+                Xtr, ytr,
+                group=gtr, sample_weight=wtr,
+                eval_set=[(Xvl, yvl)], eval_group=[gvl],
+                verbose=False,
+            )
             fold_scores = fold_model.predict(Xvl)
             fold_ndcg1  = _compute_ndcg1(fold_val, fold_scores, target_col)
             fold_ndcg1s.append(fold_ndcg1)
@@ -200,7 +204,7 @@ def train(
     )
 
     eval_model = XGBRanker(
-        **{**base_params, "n_estimators": 1500, "early_stopping_rounds": 50},
+        **{**base_params, "n_estimators": 3000, "early_stopping_rounds": 100},
     )
     eval_model.fit(
         X_train, y_train,

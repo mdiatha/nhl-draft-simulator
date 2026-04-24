@@ -460,46 +460,32 @@ def _compute_predraft_quality(year_picks: list) -> dict[int, float]:
     """
     Compute css_rank_norm for each pick in a draft year.
 
-    Strategy: group picks by CSS list (na_skater / eur_skater / goalie), sort each
-    group by raw css_rank ascending, then assign within-list ordinal rank (1 = best).
-    _css_norm_within_list() converts that to [0,1] using the list's own size as
-    the denominator, so #1 on any list scores ~1.0 regardless of raw rank number.
+    The NHL Records API returns CSS rankings as a single global list per year
+    (CSS #1 = top prospect overall, regardless of position/nationality/league).
+    Goalies and European skaters are mixed in by their global rank, not split.
 
-    This fixes the cross-list comparison problem: CSS assigns EUR skaters ranks
-    like 1–400 and goalies ranks like 365–465. Raw rank comparison would make
-    a EUR #5 (great prospect) look worse than a NA #5 just because the number is
-    similar but the lists are independent scales.
+    Strategy: sort all ranked picks by raw CSS rank globally, assign within-cohort
+    ordinal rank, then sqrt-normalize to [0, 1] using the cohort size as denom.
+    The top prospect scores ~1.0; rank #N scores ~1 - sqrt((N-1)/cohort_size).
 
-    Falls back to round-normalized pick position for pre-2008 or unranked picks.
+    sqrt scaling preserves the gap between top-end picks (CSS #1 vs #2) while
+    compressing the tail (CSS #80 vs #81 are nearly indistinguishable in practice).
+
+    Falls back to a flat penalty (0.15) for any pick without a CSS rank, so
+    unranked players always score below ranked players regardless of round.
     """
-    has_css = [p for p in year_picks if getattr(p, "css_rank", None) is not None]
-    total_picks = len(year_picks)
-    css_coverage = len(has_css) / total_picks if total_picks > 0 else 0.0
+    import math
 
+    has_css = [p for p in year_picks if getattr(p, "css_rank", None) is not None]
     result: dict[int, float] = {}
 
-    if css_coverage >= 0.5:
-        # Group by CSS list, sort by raw rank within each list
-        by_list: dict[str, list] = {}
-        for p in has_css:
-            lst = _css_list(
-                getattr(p, "position", None),
-                getattr(p, "nationality", None),
-                getattr(p, "draft_league", None),
-            )
-            by_list.setdefault(lst, []).append(p)
+    if has_css:
+        sorted_players = sorted(has_css, key=lambda p: p.css_rank)
+        cohort_size = len(sorted_players)
+        for ordinal, p in enumerate(sorted_players, start=1):
+            result[p.id] = max(0.0, 1.0 - math.sqrt((ordinal - 1) / max(cohort_size, 1)))
 
-        for lst, players in by_list.items():
-            sorted_players = sorted(players, key=lambda p: p.css_rank)
-            list_size = len(sorted_players)
-            for within_rank, p in enumerate(sorted_players, start=1):
-                result[p.id] = _css_norm_within_list(within_rank, list_size)
-
-    # Unranked players: CSS deliberately excluded them, so they should score below
-    # any ranked player. A fixed penalty (0.15) reflects "not on the board" rather
-    # than a neutral 0.5 or a position-within-round proxy that rewarded early picks.
-    # Using a small positive value (not 0.0) preserves the ability to distinguish
-    # unranked players with strong PPG from those with weak PPG via other features.
+    # Unranked players: flat penalty below any ranked player.
     missing = [p for p in year_picks if p.id not in result]
     for p in missing:
         result[p.id] = 0.15

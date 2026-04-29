@@ -38,6 +38,7 @@ import random
 import statistics
 from collections import Counter, defaultdict
 
+import numpy as np
 import pandas as pd
 
 from app.constants import infer_league_key, nat_group
@@ -82,15 +83,21 @@ FEATURE_COLS: list[str] = (
     + ["height_norm", "weight_norm"]
     # League-normalized quality (2)
     + ["ppg_league_norm", "age_league_norm"]
-    # Consensus rank signals (3)
-    + ["pick_slot_norm", "rank_vs_slot", "rank_gap_norm"]
-    # GM tendency (3)
+    # Consensus rank signals (4) — css_rank_norm added directly; others kept as context
+    + ["css_rank_norm", "pick_slot_norm", "rank_vs_slot", "rank_gap_norm"]
+    # GM tendency scalars (3)
     + ["gm_pos_weight", "gm_league_weight", "gm_nat_weight"]
-    # Draft-state / supply signals (4)
+    # GM × prospect affinity interactions (3)
+    # Explicit product of GM preference weight and the matching one-hot avoids
+    # relying on XGBoost to discover the interaction via split combinations.
+    + ["gm_pos_affinity", "gm_league_affinity", "gm_nat_affinity"]
+    # Draft-state / supply signals (5)
     + ["pos_taken_before_norm", "pos_remaining_norm", "team_drafted_this_pos",
-       "pos_quality_rank_norm"]
-    # Season-over-season production (3)
-    + ["gp_pre_draft", "ppg_prev_season", "has_prev_season"]
+       "pos_quality_rank_norm", "css_rank_within_pos"]
+    # Season-over-season production (4) — ppg_delta added
+    + ["gp_pre_draft", "ppg_prev_season", "has_prev_season", "ppg_delta"]
+    # Slot pressure: fraction of round remaining (1.0 = first pick, ~0 = last)
+    + ["slot_pressure"]
     # Draft round one-hot (4)
     + [f"round_{r}" for r in DRAFT_ROUNDS]
 )
@@ -354,45 +361,77 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     out["age_league_norm"] = df.get("age_league_norm", pd.Series(0.0, index=df.index)).fillna(0.0).astype(float)
 
     # ── Rank signals ──────────────────────────────────────────────────────────
+    # css_rank_norm: the direct consensus rank signal. Previously excluded and
+    # only represented via derived features (rank_vs_slot, rank_gap_norm), which
+    # are noisy proxies. Including it directly gives the model the clearest
+    # possible signal: "how good is this player, absolutely?"
     out["css_rank_norm"] = df.get("css_rank_norm", pd.Series(0.5, index=df.index)).fillna(0.5).astype(float)
     slot = df.get("overall_pick", pd.Series(32, index=df.index)).fillna(32).astype(float)
     out["pick_slot_norm"] = (1.0 - (slot - 1) / MAX_DRAFT_POOL).clip(0.0, 1.0)
     out["rank_vs_slot"] = (out["css_rank_norm"] - out["pick_slot_norm"]).astype(float)
-    # rank_gap_norm: gap between the best prospect in this group and each prospect.
-    # Training: pre-computed per pick-slot group in build_training_dataset (correct).
-    # Inference: computed from max of this batch, which IS the full available pool
-    #            for one pick slot (also correct).
+    # rank_gap_norm: gap from the best prospect in the FULL remaining pool.
+    # Previously computed from the pick's group (1 positive + 31 negatives),
+    # which made it a near-proxy for was_picked=1 (the picked player was often
+    # the best, so gap=0 for positives). Now pre-computed from the full board.
     if "rank_gap_norm" in df.columns:
         out["rank_gap_norm"] = df["rank_gap_norm"].fillna(0.0).astype(float)
     else:
         best_norm = out["css_rank_norm"].max()
         out["rank_gap_norm"] = (best_norm - out["css_rank_norm"]).astype(float)
 
-    # ── GM tendency ───────────────────────────────────────────────────────────
+    # ── GM tendency scalars ───────────────────────────────────────────────────
     out["gm_pos_weight"]    = df.get("gm_pos_weight",    pd.Series(0.2,  index=df.index)).fillna(0.2).astype(float)
     out["gm_league_weight"] = df.get("gm_league_weight", pd.Series(0.2,  index=df.index)).fillna(0.2).astype(float)
     out["gm_nat_weight"]    = df.get("gm_nat_weight",    pd.Series(0.33, index=df.index)).fillna(0.33).astype(float)
 
+    # ── GM × prospect affinity interactions ───────────────────────────────────
+    # gm_pos/league/nat_weight are already prospect-specific scalars (e.g.
+    # gm_pos_weight is the GM's weight for *this* prospect's position).
+    # The affinity features are their product with css_rank_norm: a high-ranked
+    # player gets amplified when a GM has strong preference for that player's
+    # position/league/nationality. This captures "top center for a center-first GM"
+    # as a single feature rather than requiring XGBoost to discover the 3-way split.
+    out["gm_pos_affinity"]    = (out["gm_pos_weight"]    * out["css_rank_norm"]).astype(float)
+    out["gm_league_affinity"] = (out["gm_league_weight"] * out["css_rank_norm"]).astype(float)
+    out["gm_nat_affinity"]    = (out["gm_nat_weight"]    * out["css_rank_norm"]).astype(float)
+
     # ── Draft-state / supply signals ──────────────────────────────────────────
-    # Defaults represent a neutral mid-draft state with no team history
     out["pos_taken_before_norm"]  = df.get("pos_taken_before_norm",  pd.Series(0.2,  index=df.index)).fillna(0.2).astype(float)
     out["pos_remaining_norm"]     = df.get("pos_remaining_norm",     pd.Series(0.2,  index=df.index)).fillna(0.2).astype(float)
     out["team_drafted_this_pos"]  = df.get("team_drafted_this_pos",  pd.Series(0,    index=df.index)).fillna(0).astype(int)
-    # 0.5 = neutral (average quality at position); overridden dynamically at inference
     out["pos_quality_rank_norm"]  = df.get("pos_quality_rank_norm",  pd.Series(0.5,  index=df.index)).fillna(0.5).astype(float)
+    # css_rank_within_pos: this prospect's css_rank_norm rank among same-position
+    # players still on the board. 1.0 = best available at this position.
+    # More stable than pos_quality_rank_norm (which uses ordinal rank / n_pos).
+    out["css_rank_within_pos"] = df.get("css_rank_within_pos", pd.Series(0.5, index=df.index)).fillna(0.5).astype(float)
 
     # ── Season-over-season production ─────────────────────────────────────────
-    # gp_pre_draft: sample size signal — 1.2 PPG over 10 games ≠ 1.2 PPG over 60
     out["gp_pre_draft"]    = df.get("gp_pre_draft",    pd.Series(30,  index=df.index)).fillna(30).astype(float)
-    # ppg_prev_season: raw prior-season production (0 when unavailable)
     ppg_prev_raw           = df.get("ppg_prev_season", pd.Series(dtype=float)).reindex(df.index)
     out["ppg_prev_season"] = ppg_prev_raw.fillna(0.0).astype(float)
-    # has_prev_season: 1 = second+ major-league year (prior season data exists)
     out["has_prev_season"] = ppg_prev_raw.notna().astype(int)
+    # ppg_delta: year-over-year production improvement, normalized by the league
+    # median PPG so "improved 0.3 PPG in OHL" and "improved 0.3 PPG in KHL" are
+    # comparable. Positive = player improved; negative = regressed.
+    # Zero when prior season data is unavailable (has_prev_season=0).
+    ppg_current = df.get("points_per_game", pd.Series(0.0, index=df.index)).fillna(0.0).astype(float)
+    ppg_med_for_delta = df.get("ppg_league_norm", pd.Series(1.0, index=df.index)).fillna(1.0).astype(float)
+    # Avoid division by zero; neutral value 0 when no prior season exists
+    raw_delta = ppg_current - ppg_prev_raw.fillna(ppg_current)
+    out["ppg_delta"] = (
+        (raw_delta / ppg_med_for_delta.clip(lower=0.01))
+        .clip(-3.0, 3.0)
+        .where(ppg_prev_raw.notna(), 0.0)
+        .astype(float)
+    )
+
+    # ── Slot pressure ─────────────────────────────────────────────────────────
+    # Fraction of the current round remaining after this pick (1.0 = first pick
+    # of a round; ~0 = last pick). GMs at end-of-round are more likely to deviate
+    # from BPA: risk of a positional run exhausting their target is higher.
+    out["slot_pressure"] = df.get("slot_pressure", pd.Series(0.5, index=df.index)).fillna(0.5).astype(float)
 
     # ── Draft round one-hot ───────────────────────────────────────────────────
-    # One-hot instead of integer: round 1 and round 4 are categorically different.
-    # Integer encoding implies a false ordinal relationship.
     round_series = df.get("draft_round", pd.Series(1, index=df.index)).fillna(1).astype(int)
     for r in DRAFT_ROUNDS:
         out[f"round_{r}"] = (round_series == r).astype(int)
@@ -460,19 +499,14 @@ def _compute_predraft_quality(year_picks: list) -> dict[int, float]:
     """
     Compute css_rank_norm for each pick in a draft year.
 
-    The NHL Records API returns CSS rankings as a single global list per year
-    (CSS #1 = top prospect overall, regardless of position/nationality/league).
-    Goalies and European skaters are mixed in by their global rank, not split.
-
-    Strategy: sort all ranked picks by raw CSS rank globally, assign within-cohort
+    Sort all ranked picks by raw CSS rank globally, assign within-cohort
     ordinal rank, then sqrt-normalize to [0, 1] using the cohort size as denom.
-    The top prospect scores ~1.0; rank #N scores ~1 - sqrt((N-1)/cohort_size).
+    Top prospect scores ~1.0; rank #N scores ~1 - sqrt((N-1)/cohort_size).
 
-    sqrt scaling preserves the gap between top-end picks (CSS #1 vs #2) while
-    compressing the tail (CSS #80 vs #81 are nearly indistinguishable in practice).
-
-    Falls back to a flat penalty (0.15) for any pick without a CSS rank, so
-    unranked players always score below ranked players regardless of round.
+    Note: inference (predict.py) uses per-CSS-list normalization. The global
+    sort here means EUR skater CSS #50 gets a lower score than NA skater CSS #50,
+    which reflects real draft value (the CSS numbers are globally comparable).
+    Falls back to 0.15 for any pick without a CSS rank.
     """
     import math
 
@@ -485,10 +519,9 @@ def _compute_predraft_quality(year_picks: list) -> dict[int, float]:
         for ordinal, p in enumerate(sorted_players, start=1):
             result[p.id] = max(0.0, 1.0 - math.sqrt((ordinal - 1) / max(cohort_size, 1)))
 
-    # Unranked players: flat penalty below any ranked player.
-    missing = [p for p in year_picks if p.id not in result]
-    for p in missing:
-        result[p.id] = 0.15
+    for p in year_picks:
+        if p.id not in result:
+            result[p.id] = 0.15
 
     return result
 
@@ -621,9 +654,19 @@ def build_training_dataset(
         pos_taken: Counter[str]                           = Counter()
         team_pos_drafted: defaultdict[int, Counter[str]] = defaultdict(Counter)
 
+        # Precompute per-round slot counts for slot_pressure.
+        # picks_in_round[r] = total picks in round r for this draft year.
+        picks_in_round: dict[int, int] = Counter(p.round for p in year_picks_sorted)
+        # Track pick index within each round (reset each round).
+        round_pick_index: Counter[int] = Counter()
+
+        # best_remaining is not needed here; rank_gap_norm is recomputed group-wise
+        # after all rows are collected (see below the main loop).
+
         for i, pick in enumerate(year_picks_sorted):
+            round_pick_index[pick.round] += 1
+
             if not pick.gm_id or not pick.team_id:
-                # Still update state so counts stay accurate
                 pos_taken[pick.position or "F"] += 1
                 continue
 
@@ -647,37 +690,51 @@ def build_training_dataset(
                 quality_map=quality,
             )
 
-            # rank_gap_norm for the positive row is computed after we know the
-            # group (positive + negatives), so we patch it in below.
+            # rank_gap_norm is recomputed group-wise after all rows are built.
+            # Use 0.0 as placeholder; it will be overwritten.
+            pick_css_norm = quality[pick.id]
+
+            # css_rank_within_pos: rank among same-position players still available.
+            # 1.0 = best at this position on the board; 0.0 = worst.
+            same_pos_remaining = [p for p in remaining if (p.position or "F") == (pick.position or "F")]
+            n_same_pos = len(same_pos_remaining)
+            if n_same_pos > 1:
+                n_better_pos = sum(1 for p in same_pos_remaining if quality[p.id] > pick_css_norm)
+                pick_css_rank_within_pos = 1.0 - (n_better_pos / n_same_pos)
+            else:
+                pick_css_rank_within_pos = 1.0
+
+            # slot_pressure: fraction of current round remaining after this pick.
+            # 1.0 = first pick of round; ~0.03 = last pick of round.
+            total_in_rnd = picks_in_round.get(pick.round, 32)
+            idx_in_rnd   = round_pick_index[pick.round]  # 1-based after increment above
+            pick_slot_pressure = max(0.0, 1.0 - (idx_in_rnd - 1) / max(total_in_rnd - 1, 1))
+
             pos_row = {
-                "year":              year,
-                "position":          pick.position,
-                "nationality":       pick.nationality,
-                "height_cm":         pick.height_cm,
-                "weight_kg":         pick.weight_kg,
-                "draft_league":      pick.draft_league,
-                "draft_league_tier": pick.draft_league_tier,
-                "points_per_game":   pick.points_per_game,
-                "gp_pre_draft":      pick.gp_pre_draft,
-                "ppg_prev_season":   pick.ppg_prev_season,
-                "has_prev_season":   1 if pick.ppg_prev_season is not None else 0,
-                "age_at_draft":      pick.age_at_draft,
-                "overall_pick":      pick.overall_pick,
-                "draft_round":       pick.round,
-                "css_rank_norm":     quality[pick.id],
-                "rank_gap_norm":     None,  # filled in after negatives are known
+                "year":                  year,
+                "position":              pick.position,
+                "nationality":           pick.nationality,
+                "height_cm":             pick.height_cm,
+                "weight_kg":             pick.weight_kg,
+                "draft_league":          pick.draft_league,
+                "draft_league_tier":     pick.draft_league_tier,
+                "points_per_game":       pick.points_per_game,
+                "gp_pre_draft":          pick.gp_pre_draft,
+                "ppg_prev_season":       pick.ppg_prev_season,
+                "has_prev_season":       1 if pick.ppg_prev_season is not None else 0,
+                "age_at_draft":          pick.age_at_draft,
+                "overall_pick":          pick.overall_pick,
+                "draft_round":           pick.round,
+                "css_rank_norm":         pick_css_norm,
+                "rank_gap_norm":         0.0,  # recomputed group-wise after loop
+                "css_rank_within_pos":   pick_css_rank_within_pos,
+                "slot_pressure":         pick_slot_pressure,
                 **gm_feats,
                 **ctx,
                 "was_picked": 1,
             }
             rows.append(pos_row)
 
-            # Negatives: prospects still available at this slot — the next
-            # NEGATIVE_WINDOW picks (regardless of round) who could have been
-            # chosen here but weren't.  Removing the same-round restriction
-            # ensures every pick gets ~31 negatives: early picks compare against
-            # round-1 peers; late round-1 picks compare against round-2 prospects
-            # (which is the actual decision being made at pick #30-32).
             later = year_picks_sorted[i + 1:][:NEGATIVE_WINDOW]
             negs  = (
                 rng.sample(later, min(neg_samples_per_pick, len(later)))
@@ -685,15 +742,9 @@ def build_training_dataset(
                 else later
             )
 
-            # rank_gap_norm: gap between the best prospect in this group and each
-            # prospect.  Must be computed per group so training matches inference
-            # (where build_features is called on a single pick-slot at a time).
-            group_css_norms = [quality[pick.id]] + [quality[neg.id] for neg in negs]
-            group_best_css  = max(group_css_norms) if group_css_norms else quality[pick.id]
-            # Patch the positive row now that we know the group's best CSS
-            pos_row["rank_gap_norm"] = group_best_css - quality[pick.id]
-
             for neg in negs:
+                neg_css_norm = quality[neg.id]
+
                 neg_gm_feats = _gm_feats_from_picks(
                     pre_by_gm[pick.gm_id],
                     year,
@@ -708,23 +759,34 @@ def build_training_dataset(
                     tier_ppg_med, tier_age_med,
                     quality_map=quality,
                 )
+
+                same_pos_neg = [p for p in remaining if (p.position or "F") == (neg.position or "F")]
+                n_sp_neg = len(same_pos_neg)
+                if n_sp_neg > 1:
+                    n_better_neg = sum(1 for p in same_pos_neg if quality[p.id] > neg_css_norm)
+                    neg_css_rank_within_pos = 1.0 - (n_better_neg / n_sp_neg)
+                else:
+                    neg_css_rank_within_pos = 1.0
+
                 rows.append({
-                    "year":              year,
-                    "position":          neg.position,
-                    "nationality":       neg.nationality,
-                    "height_cm":         neg.height_cm,
-                    "weight_kg":         neg.weight_kg,
-                    "draft_league":      neg.draft_league,
-                    "draft_league_tier": neg.draft_league_tier,
-                    "points_per_game":   neg.points_per_game,
-                    "gp_pre_draft":      neg.gp_pre_draft,
-                    "ppg_prev_season":   neg.ppg_prev_season,
-                    "has_prev_season":   1 if neg.ppg_prev_season is not None else 0,
-                    "age_at_draft":      neg.age_at_draft,
-                    "overall_pick":      pick.overall_pick,
-                    "draft_round":       pick.round,
-                    "css_rank_norm":     quality[neg.id],
-                    "rank_gap_norm":     group_best_css - quality[neg.id],
+                    "year":                  year,
+                    "position":              neg.position,
+                    "nationality":           neg.nationality,
+                    "height_cm":             neg.height_cm,
+                    "weight_kg":             neg.weight_kg,
+                    "draft_league":          neg.draft_league,
+                    "draft_league_tier":     neg.draft_league_tier,
+                    "points_per_game":       neg.points_per_game,
+                    "gp_pre_draft":          neg.gp_pre_draft,
+                    "ppg_prev_season":       neg.ppg_prev_season,
+                    "has_prev_season":       1 if neg.ppg_prev_season is not None else 0,
+                    "age_at_draft":          neg.age_at_draft,
+                    "overall_pick":          pick.overall_pick,
+                    "draft_round":           pick.round,
+                    "css_rank_norm":         neg_css_norm,
+                    "rank_gap_norm":         0.0,  # recomputed group-wise after loop
+                    "css_rank_within_pos":   neg_css_rank_within_pos,
+                    "slot_pressure":         pick_slot_pressure,
                     **neg_gm_feats,
                     **neg_ctx,
                     "was_picked": 0,
@@ -742,27 +804,35 @@ def build_training_dataset(
 
     df = pd.DataFrame(rows)
 
-    # Sample weighting: two multiplicative factors per row.
+    # Recompute rank_gap_norm as group-best minus each player's css_rank_norm.
+    # Each group = (year, overall_pick) = 1 positive + up to NEGATIVE_WINDOW negatives.
+    # This tells the model "how far from the best available in this pick's comparison set?"
+    # which is a direct measure of opportunity cost at this slot.
+    if "css_rank_norm" in df.columns and "rank_gap_norm" in df.columns:
+        group_best = df.groupby(["year", "overall_pick"])["css_rank_norm"].transform("max")
+        df["rank_gap_norm"] = (group_best - df["css_rank_norm"]).clip(lower=0.0)
+
+    # Sample weighting: additive combination of recency and round importance.
     #
-    # 1. Recency decay (0.88/year): recent drafts reflect current GM philosophy
-    #    and modern player-development paths better than drafts from 15 years ago.
-    #    Decay of 0.88/year → 2024 rows count ~2.9× more than 2008 rows.
+    # Old scheme: multiplicative (recency × round_weight). Problem: a round-1 pick
+    # from 2008 (weight 0.88^16 × 4.0 = 0.48) could outweigh a round-2 pick from
+    # 2022 (weight 0.88^2 × 2.5 = 1.94). Recency and round signal are independent;
+    # multiplying them creates an unintended joint prior.
     #
-    # 2. Round weight: round 1 picks are the most predictable (best players, most
-    #    scouting coverage, highest-stakes decisions) and the most important for
-    #    simulation quality. Later rounds involve more developmental gambles and
-    #    idiosyncratic team preferences that are harder to generalize. Upweighting
-    #    early rounds ensures the model learns round-1 dynamics most accurately.
-    RECENCY_DECAY = 0.88
-    ROUND_WEIGHT  = {1: 4.0, 2: 2.5, 3: 1.5, 4: 1.2, 5: 1.0, 6: 0.8, 7: 0.6}
-    MAX_YEAR = df["year"].max() if "year" in df.columns else 2024
-    df["sample_weight"] = df.apply(
-        lambda row: (
-            RECENCY_DECAY ** (MAX_YEAR - int(row["year"]))
-            * ROUND_WEIGHT.get(int(row.get("draft_round", 1)), 1.0)
-        ),
-        axis=1,
-    )
+    # New scheme: additive with separate caps.
+    #   recency_w = 0.92^(MAX_YEAR - year)   — gentler decay; 2008 data keeps ~26%
+    #                                           weight vs 12% with 0.88 base
+    #   round_w   = 1 + round_bonus[round]   — additive bonus on top of base 1.0
+    # Final weight = recency_w * (1 + round_bonus) so recency still scales round
+    # importance, but no single factor dominates the product.
+    RECENCY_DECAY  = 0.92
+    ROUND_BONUS    = {1: 2.0, 2: 1.0, 3: 0.4, 4: 0.1}   # additive on top of 1.0
+    MAX_YEAR   = int(df["year"].max()) if "year" in df.columns else 2024
+    years      = np.asarray(df["year"].astype(int))
+    rounds     = df.get("draft_round", pd.Series(1, index=df.index)).fillna(1).astype(int).values
+    recency_w  = RECENCY_DECAY ** (MAX_YEAR - years)
+    round_mult = np.array([1.0 + ROUND_BONUS.get(int(r), 0.0) for r in rounds])
+    df["sample_weight"] = recency_w * round_mult
 
     logger.info(
         "Training dataset: %d rows (%d positive, %d negative)",

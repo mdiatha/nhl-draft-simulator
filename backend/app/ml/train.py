@@ -72,13 +72,13 @@ def train(
         objective="rank:ndcg",
         eval_metric="ndcg@1",
         learning_rate=0.03,
-        max_depth=6,
-        subsample=0.85,
-        colsample_bytree=0.85,
-        min_child_weight=2,
+        max_depth=5,
+        subsample=0.80,
+        colsample_bytree=0.75,
+        min_child_weight=5,
         gamma=0.0,
         reg_alpha=0.0,
-        reg_lambda=1.0,
+        reg_lambda=1.5,
         random_state=42,
     )
     def _make_groups(split_df: pd.DataFrame) -> np.ndarray:
@@ -132,6 +132,7 @@ def train(
     ]
 
     fold_ndcg1s: list[float] = []
+    fold_best_iters: list[int] = []
     if "year" in df.columns:
         for cutoff, val_year in CV_FOLDS:
             fold_train = df[df["year"] <= cutoff].sort_values(_group_keys).reset_index(drop=True)
@@ -158,7 +159,9 @@ def train(
             fold_scores = fold_model.predict(Xvl)
             fold_ndcg1  = _compute_ndcg1(fold_val, fold_scores, target_col)
             fold_ndcg1s.append(fold_ndcg1)
-            logger.info("CV fold cutoff=%d val=%d  NDCG@1=%.4f", cutoff, val_year, fold_ndcg1)
+            fold_best_iters.append(max(fold_model.best_iteration, 1))
+            logger.info("CV fold cutoff=%d val=%d  NDCG@1=%.4f  best_iter=%d",
+                        cutoff, val_year, fold_ndcg1, fold_model.best_iteration)
 
     if not fold_ndcg1s:
         raise ValueError(
@@ -215,7 +218,22 @@ def train(
         verbose=False,
     )
 
-    best_iter = max(eval_model.best_iteration, 1)
+    raw_best_iter = eval_model.best_iteration
+
+    # NDCG@1 on a ~249-group val set is very noisy: a single lucky/unlucky group
+    # can shift the metric by 0.4pp, causing early stopping to fire at iter 0-2
+    # even when the model is still improving. If the final split says stop early
+    # (≤ 10 trees), fall back to the median best_iteration from the 9 CV folds,
+    # which averages over more val groups and is more stable.
+    if raw_best_iter <= 10 and fold_best_iters:
+        cv_median_iter = int(np.median(fold_best_iters))
+        best_iter = max(cv_median_iter, 50)  # floor at 50 to avoid trivial models
+        logger.info(
+            "Final split best_iter=%d is too low — using CV median=%d (floor 50)",
+            raw_best_iter, best_iter,
+        )
+    else:
+        best_iter = max(raw_best_iter, 1)
 
     scores_val = eval_model.predict(X_val)
     ndcg1 = _compute_ndcg1(val_df, scores_val, target_col)

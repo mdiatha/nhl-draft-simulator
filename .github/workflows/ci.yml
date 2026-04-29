@@ -243,15 +243,21 @@ jobs:
       - name: Upload model to S3 (main only)
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
         run: |
-          if [ -f backend/app/ml/model.pkl ]; then
-            aws s3 cp backend/app/ml/model.pkl \
-              s3://${{ secrets.AWS_S3_BUCKET }}/models/latest/model.pkl
-            aws s3 cp backend/app/ml/model_meta.json \
-              s3://${{ secrets.AWS_S3_BUCKET }}/models/latest/model_meta.json
-            echo "Model uploaded to S3"
-          else
-            echo "No model.pkl found in repo — skipping upload"
+          # model.pkl must be committed — training on the production server is
+          # disabled (APP_ENV=production). Train locally, commit the artifact,
+          # and CI deploys it. This step fails loudly if the file is missing so
+          # a missing model never silently ships a broken deploy.
+          if [ ! -f backend/app/ml/model.pkl ]; then
+            echo "ERROR: backend/app/ml/model.pkl not found in repo."
+            echo "Train locally with: python -m app.ml.train_model"
+            echo "Then commit model.pkl and model_meta.json before pushing."
+            exit 1
           fi
+          aws s3 cp backend/app/ml/model.pkl \
+            s3://${{ secrets.AWS_S3_BUCKET }}/models/latest/model.pkl
+          aws s3 cp backend/app/ml/model_meta.json \
+            s3://${{ secrets.AWS_S3_BUCKET }}/models/latest/model_meta.json
+          echo "Model uploaded: $(cat backend/app/ml/model_meta.json | python3 -c 'import sys,json; m=json.load(sys.stdin); print(f\"ndcg1={m[\\x27validation_auc\\x27]} trained_at={m[\\x27trained_at\\x27]}\")')"
 
   # - Deploy to EC2 (main branch only) -
   # Architecture: single EC2 running Docker Compose (API + Postgres + Redis + Ollama).

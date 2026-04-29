@@ -82,6 +82,17 @@ async def train_model(final: bool = False, db: Session = Depends(get_db)):
         MODEL_TRAINING_SAMPLES, MODEL_INFO,
     )
 
+    from app.config import settings
+    if settings.APP_ENV == "production":
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "Training is disabled in production. Train locally with "
+                "`python -m app.ml.train_model`, commit model.pkl + model_meta.json, "
+                "and push to main — CI will upload to S3 on deploy."
+            ),
+        )
+
     if not _acquire_training_lock():
         raise HTTPException(status_code=409, detail="A training run is already in progress.")
 

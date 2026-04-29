@@ -89,6 +89,9 @@ class SimulateDraftRequest(BaseModel):
         return v
 
 
+_CANDIDATE_POOL_SIZE = 32  # match NEGATIVE_WINDOW from training: only score top-32
+
+
 def _sample_pick(
     available: list,
     scores: dict[int, float],
@@ -98,26 +101,38 @@ def _sample_pick(
     """
     Sample a prospect from the available pool using temperature-scaled softmax.
 
-    temperature < 1: sharpens the distribution — the model's top pick wins most
-                     of the time, but plausible alternatives still occur.
-    temperature = 1: sample exactly proportional to raw model scores.
-    temperature → 0: collapses to argmax (deterministic).
+    Two-stage process:
+    1. Restrict to top-_CANDIDATE_POOL_SIZE by model score (matches NEGATIVE_WINDOW=31
+       from training — model only learned to compare 32 prospects at a time).
+    2. Min-max normalize scores to [0, 1] within the candidate window before softmax.
+       XGBRanker outputs raw leaf values (not probabilities) that can be negative.
+       Applying softmax directly to raw scores like -0.24 vs 0.78 produces extreme,
+       numerically unstable weights. Normalizing within the window makes sampling
+       correctly relative: the top candidate in any window gets weight 1.0.
 
-    Steps:
-      1. Divide each score by temperature (amplifies differences when T < 1).
-      2. Exponentiate → unnormalized probabilities.
-      3. Normalize to sum to 1.
-      4. Sample one prospect using those weights.
+    temperature < 1: sharpens — top prospect wins most picks, realistic alternatives occur.
+    temperature = 1: sample proportional to normalized scores.
+    temperature → 0: argmax (deterministic).
     """
     if temperature <= 0:
-        # Degenerate case: pure argmax
         return max(available, key=lambda p: scores.get(p.id, 0.0))
 
-    scaled = [scores.get(p.id, 0.0) / temperature for p in available]
-    # Subtract max for numerical stability before exp
+    # Restrict sampling to top candidates by model score
+    candidates = sorted(available, key=lambda p: scores.get(p.id, 0.0), reverse=True)
+    candidates = candidates[:_CANDIDATE_POOL_SIZE]
+
+    # Min-max normalize raw ranker scores within the window to [0, 1]
+    raw = [scores.get(p.id, 0.0) for p in candidates]
+    lo, hi = min(raw), max(raw)
+    if hi > lo:
+        normed = [(s - lo) / (hi - lo) for s in raw]
+    else:
+        normed = [1.0] * len(raw)
+
+    scaled = [s / temperature for s in normed]
     max_s = max(scaled)
     weights = [math.exp(s - max_s) for s in scaled]
-    return rng.choices(available, weights=weights, k=1)[0]
+    return rng.choices(candidates, weights=weights, k=1)[0]
 
 
 @router.post("/simulate")
@@ -209,6 +224,27 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
         }
 
         scores = score_pool_for_team(available, profile, pick_num, draft_state, pool_stats)
+
+        # Blend ML scores with a CSS-rank prior.
+        # XGBRanker has NDCG@1=0.18 — it adds real signal but is often wrong.
+        # CSS rank is the strongest single predictor (~50-70% accuracy for pick 1).
+        # Blending 60% CSS / 40% ML preserves team-specific variation while
+        # preventing unrealistic reaches caused by low ML model confidence.
+        if scores and available:
+            _css_max = max((p.css_ranking or 9999) for p in available)
+            css_prior = {
+                p.id: 1.0 - (p.css_ranking - 1) / _css_max
+                if p.css_ranking else 0.0
+                for p in available
+            }
+            _ml_lo  = min(scores.values())
+            _ml_hi  = max(scores.values())
+            _ml_rng = _ml_hi - _ml_lo if _ml_hi > _ml_lo else 1.0
+            ml_norm = {pid: (s - _ml_lo) / _ml_rng for pid, s in scores.items()}
+            scores = {
+                pid: 0.4 * ml_norm.get(pid, 0.5) + 0.6 * css_prior.get(pid, 0.5)
+                for pid in scores
+            }
 
         # Apply conformal calibration intervals if calibration data is available.
         # cal_intervals maps prospect_id → {in_prediction_set, nc_score, coverage}.

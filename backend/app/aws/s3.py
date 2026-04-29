@@ -44,8 +44,13 @@ def upload_model(local_path: Path, trained_at: str) -> bool:
     Upload model.pkl and model_meta.json to S3 after training.
 
     Writes to two locations:
-      - models/latest/  (always current)
-      - models/{trained_at}/  (immutable version for rollback)
+      - models/{trained_at}/  (immutable version for rollback — always written)
+      - models/latest/        (only overwritten if new model is better than current)
+
+    The quality guard compares validation_auc (NDCG@1) against the existing
+    latest/model_meta.json. If the new model is worse, latest/ is left intact
+    so a locally-trained high-quality model isn't clobbered by a run on a
+    smaller dataset (e.g. production DB with fewer historical picks).
 
     Returns True on success, False if S3 is not configured or upload fails.
     """
@@ -57,17 +62,46 @@ def upload_model(local_path: Path, trained_at: str) -> bool:
     bucket = settings.AWS_S3_BUCKET
     meta_path = local_path.parent / "model_meta.json"
 
+    # Read new model's quality from local meta
+    new_auc: float = 0.0
+    try:
+        if meta_path.exists():
+            new_auc = json.loads(meta_path.read_text()).get("validation_auc") or 0.0
+    except Exception:
+        pass
+
+    # Check existing latest/ quality before deciding whether to overwrite
+    promote_to_latest = True
+    try:
+        s3 = _client()
+        existing_meta = json.loads(
+            s3.get_object(Bucket=bucket, Key="models/latest/model_meta.json")["Body"].read()
+        )
+        existing_auc = existing_meta.get("validation_auc") or 0.0
+        if new_auc < existing_auc:
+            logger.warning(
+                "s3.upload_skipped_quality_guard new_auc=%.4f existing_auc=%.4f — "
+                "keeping existing latest/ model",
+                new_auc, existing_auc,
+            )
+            promote_to_latest = False
+    except Exception:
+        pass  # No existing model or fetch failed — safe to promote
+
     files_to_upload = [
-        (local_path,  "model.pkl"),
-        (meta_path,   "model_meta.json"),
+        (local_path, "model.pkl"),
+        (meta_path,  "model_meta.json"),
     ]
 
     try:
         s3 = _client()
+        prefixes = [trained_at]
+        if promote_to_latest:
+            prefixes.append("latest")
         for file_path, filename in files_to_upload:
             if not file_path.exists():
                 continue
-            for prefix in ("latest", trained_at):
+            for prefix in prefixes:
                 key = f"models/{prefix}/{filename}"
                 s3.upload_file(str(file_path), bucket, key)
                 logger.info(

@@ -85,8 +85,8 @@ FEATURE_COLS: list[str] = (
     + ["ppg_league_norm", "age_league_norm"]
     # Consensus rank signals (4) — css_rank_norm added directly; others kept as context
     + ["css_rank_norm", "pick_slot_norm", "rank_vs_slot", "rank_gap_norm"]
-    # GM tendency scalars (3)
-    + ["gm_pos_weight", "gm_league_weight", "gm_nat_weight"]
+    # GM tendency scalars (4) — includes pick-count normalisation
+    + ["gm_pos_weight", "gm_league_weight", "gm_nat_weight", "gm_n_picks_norm"]
     # GM × prospect affinity interactions (3)
     # Explicit product of GM preference weight and the matching one-hot avoids
     # relying on XGBoost to discover the interaction via split combinations.
@@ -129,7 +129,7 @@ def _gm_feats_from_picks(
     _ROUND_WEIGHTS = {1: 7, 2: 5, 3: 3}
 
     if not gm_picks:
-        return {"gm_pos_weight": 0.2, "gm_league_weight": 0.2, "gm_nat_weight": 0.33}
+        return {"gm_pos_weight": 0.2, "gm_league_weight": 0.2, "gm_nat_weight": 0.33, "gm_n_picks_norm": 0.0}
 
     pos_w: dict[str, float]    = {}
     league_w: dict[str, float] = {}
@@ -152,6 +152,16 @@ def _gm_feats_from_picks(
         t = sum(d.values())
         return {k: v / t for k, v in d.items()} if t > 0 else {}
 
+    # Adaptive shrinkage: GMs with more picks need less regularisation toward
+    # the league average — their actual preferences are more reliable.
+    n_picks = len(gm_picks)
+    if n_picks < 20:
+        _SHRINKAGE_K = 30   # heavy shrinkage — little history
+    elif n_picks <= 60:
+        _SHRINKAGE_K = 15   # moderate shrinkage
+    else:
+        _SHRINKAGE_K = 5    # light shrinkage — trust their preferences
+
     def _shrink(gm_d: dict, prior_d: dict) -> dict:
         alpha = total_w / (total_w + _SHRINKAGE_K)
         return {
@@ -167,6 +177,7 @@ def _gm_feats_from_picks(
         "gm_pos_weight":    pos_w.get(position or "C", 0.0),
         "gm_league_weight": league_w.get(infer_league_key(draft_league or ""), 0.0),
         "gm_nat_weight":    nat_w.get(nat_group(nationality or ""), 0.0),
+        "gm_n_picks_norm":  min(n_picks / 200.0, 1.0),
     }
 
 
@@ -177,16 +188,22 @@ def _gm_features(profile, position: str, draft_league: str, nationality: str) ->
             "gm_pos_weight":    0.2,
             "gm_league_weight": 0.2,
             "gm_nat_weight":    0.33,
+            "gm_n_picks_norm":  0.0,
         }
 
     pos_weights    = profile.position_weights or {}
     league_weights = profile.league_weights or {}
     nat_weights    = profile.nationality_weights or {}
 
+    # n_picks is stored on the profile if available; fall back to 0.
+    raw_n = getattr(profile, "n_picks", None)
+    n_picks = int(raw_n) if isinstance(raw_n, (int, float)) else 0
+
     return {
         "gm_pos_weight":    pos_weights.get(position or "C", 0.0),
         "gm_league_weight": league_weights.get(infer_league_key(draft_league or ""), 0.0),
         "gm_nat_weight":    nat_weights.get(nat_group(nationality or ""), 0.0),
+        "gm_n_picks_norm":  min(n_picks / 200.0, 1.0),
     }
 
 
@@ -383,6 +400,10 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     out["gm_pos_weight"]    = df.get("gm_pos_weight",    pd.Series(0.2,  index=df.index)).fillna(0.2).astype(float)
     out["gm_league_weight"] = df.get("gm_league_weight", pd.Series(0.2,  index=df.index)).fillna(0.2).astype(float)
     out["gm_nat_weight"]    = df.get("gm_nat_weight",    pd.Series(0.33, index=df.index)).fillna(0.33).astype(float)
+    # gm_n_picks_norm: number of GM pre-draft picks / 200, capped at 1.0.
+    # Tells the model how much to trust the tendency signal: 0.0 = new GM with
+    # no history; 1.0 = experienced GM with 200+ picks tracked.
+    out["gm_n_picks_norm"]  = df.get("gm_n_picks_norm",  pd.Series(0.0,  index=df.index)).fillna(0.0).astype(float)
 
     # ── GM × prospect affinity interactions ───────────────────────────────────
     # gm_pos/league/nat_weight are already prospect-specific scalars (e.g.
@@ -735,12 +756,43 @@ def build_training_dataset(
             }
             rows.append(pos_row)
 
-            later = year_picks_sorted[i + 1:][:NEGATIVE_WINDOW]
-            negs  = (
-                rng.sample(later, min(neg_samples_per_pick, len(later)))
-                if neg_samples_per_pick is not None
-                else later
-            )
+            # ── Position-stratified negative sampling ─────────────────────────
+            # Goal: at least 40% of negatives are from the same position as the
+            # positive pick (drawn from anywhere in the draft year remaining pool),
+            # ensuring the model learns fine-grained within-position distinctions.
+            # The remaining 60% use the original slot-window approach.
+            #
+            # n_pos_target  = floor(NEGATIVE_WINDOW * 0.4) = 12
+            # n_slot_target = NEGATIVE_WINDOW - n_pos_target = 19
+            # Negatives are deduplicated so the total stays at NEGATIVE_WINDOW.
+            later_window = year_picks_sorted[i + 1:][:NEGATIVE_WINDOW]
+
+            pos_target  = int(NEGATIVE_WINDOW * 0.4)  # 12 same-position negatives
+            slot_target = NEGATIVE_WINDOW - pos_target  # 19 slot-window negatives
+
+            pick_pos = pick.position or "F"
+
+            # Same-position candidates: any pick after this one in the year,
+            # NOT restricted to the slot window.
+            same_pos_pool = [
+                p for p in year_picks_sorted[i + 1:]
+                if (p.position or "F") == pick_pos
+            ]
+
+            if len(same_pos_pool) >= pos_target:
+                # Enough same-position players available: sample pos_target of them.
+                pos_negs = rng.sample(same_pos_pool, pos_target)
+                # Slot-window negatives: exclude picks already chosen as pos_negs.
+                pos_neg_ids = {p.id for p in pos_negs}
+                slot_pool = [p for p in later_window if p.id not in pos_neg_ids]
+                slot_negs = slot_pool[:slot_target]
+                negs = pos_negs + slot_negs
+            else:
+                # Not enough same-position players — fall back to original behavior.
+                negs = later_window
+
+            if neg_samples_per_pick is not None:
+                negs = rng.sample(negs, min(neg_samples_per_pick, len(negs)))
 
             for neg in negs:
                 neg_css_norm = quality[neg.id]
@@ -826,7 +878,7 @@ def build_training_dataset(
     # Final weight = recency_w * (1 + round_bonus) so recency still scales round
     # importance, but no single factor dominates the product.
     RECENCY_DECAY  = 0.92
-    ROUND_BONUS    = {1: 2.0, 2: 1.0, 3: 0.4, 4: 0.1}   # additive on top of 1.0
+    ROUND_BONUS    = {1: 3.0, 2: 1.0, 3: 0.4, 4: 0.1}   # additive on top of 1.0; R1 boosted to 3.0
     MAX_YEAR   = int(df["year"].max()) if "year" in df.columns else 2024
     years      = np.asarray(df["year"].astype(int))
     rounds     = df.get("draft_round", pd.Series(1, index=df.index)).fillna(1).astype(int).values

@@ -15,6 +15,13 @@ from app.ml.features import (
 
 logger = logging.getLogger(__name__)
 
+# Restrict inference to top-N CSS-ranked prospects before scoring.
+# This aligns with NEGATIVE_WINDOW=31 from training (model learned to compare
+# prospects within a ~32-player window). We use 40 to give extra room for
+# positional variation while still preventing low-CSS prospects from being
+# over-scored due to rank_gap_norm anchoring against the full pool.
+INFERENCE_CANDIDATE_WINDOW = 40
+
 
 def compute_pool_stats(prospects: list) -> dict:
     """
@@ -123,6 +130,17 @@ def _score_pool_inner(
     db,
 ) -> dict[int, float]:
     """Inner implementation — separated so the outer function can time it cleanly."""
+    # ── Restrict to top-N CSS-ranked prospects ────────────────────────────────
+    # Sort prospects by css_ranking (nulls last — unranked go to end), then keep
+    # only the top INFERENCE_CANDIDATE_WINDOW. This aligns inference with training:
+    # the model learned to compare prospects within a local ~32-player window, so
+    # scoring the full pool of 224 produces wildly miscalibrated rank_gap_norm
+    # values that cause low-CSS-rank prospects to be over-scored.
+    css_ranked   = [p for p in prospects if p.css_ranking is not None]
+    css_unranked = [p for p in prospects if p.css_ranking is None]
+    css_ranked_sorted = sorted(css_ranked, key=lambda p: p.css_ranking)
+    prospects = (css_ranked_sorted + css_unranked)[:INFERENCE_CANDIDATE_WINDOW]
+
     # Unpack draft state
     pos_taken      = (draft_state or {}).get("pos_taken", Counter())
     team_positions = (draft_state or {}).get("team_positions", Counter())
@@ -179,8 +197,8 @@ def _score_pool_inner(
         slot_norm = (1.0 - (pick_slot - 1) / MAX_DRAFT_POOL)
         cached_X["pick_slot_norm"] = slot_norm
         cached_X["rank_vs_slot"] = cached_X["css_rank_norm"] - slot_norm
-        # rank_gap_norm must match training: gap from best in local NEGATIVE_WINDOW+1 window,
-        # not from the global pool. Override the cached value with the local-window version.
+        # rank_gap_norm: gap from the best css_rank_norm in the top-INFERENCE_CANDIDATE_WINDOW
+        # scoring window. Prospects is already filtered to that window above.
         _sorted_c = sorted(prospects, key=lambda p: quality_map_inf.get(p.id, 0.0), reverse=True)
         _window_best_c = quality_map_inf.get(_sorted_c[0].id, 0.0) if _sorted_c else 0.0
         pid_to_gap = {
@@ -271,14 +289,9 @@ def _score_pool_inner(
             scores = registry.model.predict_proba(X)[:, 1]
         return {pid: float(s) for pid, s in zip(ids, scores)}
 
-    # rank_gap_norm train/inference alignment:
-    # During training, rank_gap_norm = max(css_rank_norm in the NEGATIVE_WINDOW+1 group)
-    # minus each prospect's css_rank_norm. The group is 1 positive + up to 31 negatives,
-    # so max is always the best prospect in a local 32-pick window.
-    # At inference we must use the same local window: top-NEGATIVE_WINDOW+1 by css_rank_norm
-    # from the current available pool. Using all 224 prospects produces wildly different
-    # rank_gap_norm values (the #1 feature) and causes low-CSS-rank players to be over-scored.
-    # The best prospect in the local window is simply the top-ranked available prospect.
+    # rank_gap_norm: gap from the best css_rank_norm in the scoring window.
+    # prospects is already filtered to top-INFERENCE_CANDIDATE_WINDOW above,
+    # so _window_best is the best of the ~40 candidates the model compares.
     _window_best = max(quality_map_inf.values(), default=0.0)
     rank_gap_map = {
         p.id: max(0.0, _window_best - quality_map_inf.get(p.id, 0.0))

@@ -386,10 +386,9 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
     slot = df.get("overall_pick", pd.Series(32, index=df.index)).fillna(32).astype(float)
     out["pick_slot_norm"] = (1.0 - (slot - 1) / MAX_DRAFT_POOL).clip(0.0, 1.0)
     out["rank_vs_slot"] = (out["css_rank_norm"] - out["pick_slot_norm"]).astype(float)
-    # rank_gap_norm: gap from the best prospect in the FULL remaining pool.
-    # Previously computed from the pick's group (1 positive + 31 negatives),
-    # which made it a near-proxy for was_picked=1 (the picked player was often
-    # the best, so gap=0 for positives). Now pre-computed from the full board.
+    # rank_gap_norm: gap from the best css_rank_norm in the current round.
+    # Pre-computed in build_training_dataset (round-anchored) and in predict.py
+    # (window-anchored to top-INFERENCE_CANDIDATE_WINDOW prospects). Pass-through here.
     if "rank_gap_norm" in df.columns:
         out["rank_gap_norm"] = df["rank_gap_norm"].fillna(0.0).astype(float)
     else:
@@ -681,8 +680,18 @@ def build_training_dataset(
         # Track pick index within each round (reset each round).
         round_pick_index: Counter[int] = Counter()
 
-        # best_remaining is not needed here; rank_gap_norm is recomputed group-wise
-        # after all rows are collected (see below the main loop).
+        # Compute best css_rank_norm per round, used to anchor rank_gap_norm.
+        # This matches inference: rank_gap_norm is anchored to the best prospect
+        # in the local scoring window, not the global pool. Using the round's best
+        # ensures that a pick at slot #33 (R2, pick 1) is compared against the
+        # best player remaining in round 2, not round 1's top prospect (who is
+        # already gone). Updated per-pick below as players are consumed.
+        round_best: dict[int, float] = {}
+        for p in year_picks_sorted:
+            rnd = p.round or 1
+            q   = quality[p.id]
+            if rnd not in round_best or q > round_best[rnd]:
+                round_best[rnd] = q
 
         for i, pick in enumerate(year_picks_sorted):
             round_pick_index[pick.round] += 1
@@ -711,8 +720,6 @@ def build_training_dataset(
                 quality_map=quality,
             )
 
-            # rank_gap_norm is recomputed group-wise after all rows are built.
-            # Use 0.0 as placeholder; it will be overwritten.
             pick_css_norm = quality[pick.id]
 
             # css_rank_within_pos: rank among same-position players still available.
@@ -747,7 +754,7 @@ def build_training_dataset(
                 "overall_pick":          pick.overall_pick,
                 "draft_round":           pick.round,
                 "css_rank_norm":         pick_css_norm,
-                "rank_gap_norm":         0.0,  # recomputed group-wise after loop
+                "rank_gap_norm":         max(0.0, round_best.get(pick.round or 1, pick_css_norm) - pick_css_norm),
                 "css_rank_within_pos":   pick_css_rank_within_pos,
                 "slot_pressure":         pick_slot_pressure,
                 **gm_feats,
@@ -836,7 +843,7 @@ def build_training_dataset(
                     "overall_pick":          pick.overall_pick,
                     "draft_round":           pick.round,
                     "css_rank_norm":         neg_css_norm,
-                    "rank_gap_norm":         0.0,  # recomputed group-wise after loop
+                    "rank_gap_norm":         max(0.0, round_best.get(neg.round or 1, neg_css_norm) - neg_css_norm),
                     "css_rank_within_pos":   neg_css_rank_within_pos,
                     "slot_pressure":         pick_slot_pressure,
                     **neg_gm_feats,
@@ -855,14 +862,6 @@ def build_training_dataset(
                 pre_by_gm[pick.gm_id].append(pick)
 
     df = pd.DataFrame(rows)
-
-    # Recompute rank_gap_norm as group-best minus each player's css_rank_norm.
-    # Each group = (year, overall_pick) = 1 positive + up to NEGATIVE_WINDOW negatives.
-    # This tells the model "how far from the best available in this pick's comparison set?"
-    # which is a direct measure of opportunity cost at this slot.
-    if "css_rank_norm" in df.columns and "rank_gap_norm" in df.columns:
-        group_best = df.groupby(["year", "overall_pick"])["css_rank_norm"].transform("max")
-        df["rank_gap_norm"] = (group_best - df["css_rank_norm"]).clip(lower=0.0)
 
     # Sample weighting: additive combination of recency and round importance.
     #

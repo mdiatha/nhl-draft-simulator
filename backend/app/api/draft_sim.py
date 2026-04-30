@@ -22,10 +22,9 @@ router = APIRouter(prefix="/draft", tags=["draft"])
 _redis, REDIS_OK = get_redis()
 
 
-DEFAULT_TEMPERATURE = 0.15  # lower = more decisive; 1.0 = pure proportional sampling
-                             # 0.15 strongly favors high-scored prospects while keeping
-                             # realistic variation — at 0.4 with 224 prospects even
-                             # CSS#188 had non-trivial selection probability
+DEFAULT_TEMPERATURE = 0.25  # lower = more decisive; 1.0 = pure proportional sampling
+                             # 0.25 produces realistic variation while staying GM-coherent;
+                             # 0.15 was too sharp, making simulation nearly deterministic
 
 
 def _pick_temperature(
@@ -97,9 +96,6 @@ class SimulateDraftRequest(BaseModel):
         return v
 
 
-_CANDIDATE_POOL_SIZE = 32  # match NEGATIVE_WINDOW from training: only score top-32
-
-
 def _sample_pick(
     available: list,
     scores: dict[int, float],
@@ -109,14 +105,13 @@ def _sample_pick(
     """
     Sample a prospect from the available pool using temperature-scaled softmax.
 
-    Two-stage process:
-    1. Restrict to top-_CANDIDATE_POOL_SIZE by model score (matches NEGATIVE_WINDOW=31
-       from training — model only learned to compare 32 prospects at a time).
-    2. Min-max normalize scores to [0, 1] within the candidate window before softmax.
-       XGBRanker outputs raw leaf values (not probabilities) that can be negative.
-       Applying softmax directly to raw scores like -0.24 vs 0.78 produces extreme,
-       numerically unstable weights. Normalizing within the window makes sampling
-       correctly relative: the top candidate in any window gets weight 1.0.
+    The pool is already restricted to top-INFERENCE_CANDIDATE_WINDOW CSS-ranked
+    prospects by predict.py/_score_pool_inner, so no further candidate restriction
+    is applied here. Min-max normalize scores within the scored pool before softmax:
+    XGBRanker outputs raw leaf values (not probabilities) that can be negative.
+    Applying softmax directly to raw scores like -0.24 vs 0.78 produces extreme,
+    numerically unstable weights. Normalizing within the window makes sampling
+    correctly relative: the top candidate in any window gets weight 1.0.
 
     temperature < 1: sharpens — top prospect wins most picks, realistic alternatives occur.
     temperature = 1: sample proportional to normalized scores.
@@ -125,9 +120,8 @@ def _sample_pick(
     if temperature <= 0:
         return max(available, key=lambda p: scores.get(p.id, 0.0))
 
-    # Restrict sampling to top candidates by model score
+    # Score all available candidates (pool already restricted by predict.py)
     candidates = sorted(available, key=lambda p: scores.get(p.id, 0.0), reverse=True)
-    candidates = candidates[:_CANDIDATE_POOL_SIZE]
 
     # Min-max normalize raw ranker scores within the window to [0, 1]
     raw = [scores.get(p.id, 0.0) for p in candidates]
@@ -175,7 +169,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
     # version are automatically bypassed after a hot-swap — no explicit cache flush.
     from app.ml.registry import registry as _registry
     _model_hash = _registry.model_hash
-    cache_key = f"draft_v12:{_model_hash}:{seed}:{body.temperature}:{body.css_weight}:{body.num_rounds}:{'-'.join(map(str, body.lottery_result))}"
+    cache_key = f"draft_v13:{_model_hash}:{seed}:{body.temperature}:{body.css_weight}:{body.num_rounds}:{'-'.join(map(str, body.lottery_result))}"
     if REDIS_OK and _redis:
         cached = _redis.get(cache_key)
         if cached:

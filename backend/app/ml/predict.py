@@ -178,6 +178,15 @@ def _score_pool_inner(
         slot_norm = (1.0 - (pick_slot - 1) / MAX_DRAFT_POOL)
         cached_X["pick_slot_norm"] = slot_norm
         cached_X["rank_vs_slot"] = cached_X["css_rank_norm"] - slot_norm
+        # rank_gap_norm must match training: gap from best in local NEGATIVE_WINDOW+1 window,
+        # not from the global pool. Override the cached value with the local-window version.
+        _sorted_c = sorted(prospects, key=lambda p: quality_map_inf.get(p.id, 0.0), reverse=True)
+        _window_best_c = quality_map_inf.get(_sorted_c[0].id, 0.0) if _sorted_c else 0.0
+        pid_to_gap = {
+            p.id: max(0.0, _window_best_c - quality_map_inf.get(p.id, 0.0))
+            for p in prospects
+        }
+        cached_X["rank_gap_norm"] = [pid_to_gap.get(p.id, 0.0) for p in prospects]
         # Overwrite round one-hots from cached features with the current round
         for r in [1, 2, 3, 4]:
             cached_X[f"round_{r}"] = int(draft_round == r)
@@ -252,6 +261,20 @@ def _score_pool_inner(
             scores = registry.model.predict_proba(X)[:, 1]
         return {pid: float(s) for pid, s in zip(ids, scores)}
 
+    # rank_gap_norm train/inference alignment:
+    # During training, rank_gap_norm = max(css_rank_norm in the NEGATIVE_WINDOW+1 group)
+    # minus each prospect's css_rank_norm. The group is 1 positive + up to 31 negatives,
+    # so max is always the best prospect in a local 32-pick window.
+    # At inference we must use the same local window: top-NEGATIVE_WINDOW+1 by css_rank_norm
+    # from the current available pool. Using all 224 prospects produces wildly different
+    # rank_gap_norm values (the #1 feature) and causes low-CSS-rank players to be over-scored.
+    # The best prospect in the local window is simply the top-ranked available prospect.
+    _window_best = max(quality_map_inf.values(), default=0.0)
+    rank_gap_map = {
+        p.id: max(0.0, _window_best - quality_map_inf.get(p.id, 0.0))
+        for p in prospects
+    }
+
     rows = []
     ids  = []
     for p in prospects:
@@ -262,9 +285,6 @@ def _score_pool_inner(
             tier_ppg_med, tier_age_med,
             quality_map=quality_map_inf,
         )
-        # css_rank_norm: passed through to build_features so it can compute
-        # rank_vs_slot and rank_gap_norm; css_rank_norm itself is no longer
-        # in FEATURE_COLS (it was redundant given rank_vs_slot + pick_slot_norm).
         css_norm = quality_map_inf[p.id]
 
         rows.append({
@@ -282,6 +302,7 @@ def _score_pool_inner(
             "overall_pick":      pick_slot,
             "draft_round":       draft_round,
             "css_rank_norm":     css_norm,
+            "rank_gap_norm":     rank_gap_map[p.id],
             **pf,
             **ctx,
         })

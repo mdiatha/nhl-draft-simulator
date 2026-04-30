@@ -223,9 +223,11 @@ def _score_pool_inner(
         cached_X["pos_remaining_norm"]    = pos_remain_list
         cached_X["team_drafted_this_pos"] = team_pos_list
 
-        # pos_quality_rank_norm: rank within same-position players on the board.
-        # Dynamic — depends on who is still available. Always overridden here.
+        # pos_quality_rank_norm and css_rank_within_pos: rank within same-position
+        # players on the board. Dynamic — depends on who is still available.
+        # Both use the same ordinal formula; always overridden here.
         pos_qual_list: list[float] = []
+        css_within_pos_list: list[float] = []
         for p in prospects:
             pos   = p.position or "F"
             this_q = quality_map_inf[p.id]
@@ -237,7 +239,14 @@ def _score_pool_inner(
             else:
                 pq = 1.0
             pos_qual_list.append(pq)
+            css_within_pos_list.append(pq)
         cached_X["pos_quality_rank_norm"] = pos_qual_list
+        cached_X["css_rank_within_pos"]   = css_within_pos_list
+        # slot_pressure: fraction of round remaining (same formula as non-cached path)
+        _ROUND_SIZES_C = {1: 32, 2: 32, 3: 32, 4: 32}
+        _round_size_c   = _ROUND_SIZES_C.get(draft_round, 32)
+        _pick_in_round_c = pick_slot - (draft_round - 1) * 32
+        cached_X["slot_pressure"] = max(0.0, 1.0 - (_pick_in_round_c - 1) / max(_round_size_c - 1, 1))
 
         from app.ml.features import FEATURE_COLS
         missing = [c for c in FEATURE_COLS if c not in cached_X.columns]
@@ -276,6 +285,29 @@ def _score_pool_inner(
         for p in prospects
     }
 
+    # slot_pressure: fraction of current round remaining. At training this is
+    # computed from actual per-round pick counts; at inference we use the standard
+    # round sizes (R1=32, R2-4=32 each). 1.0 = first pick of round, ~0 = last.
+    _ROUND_SIZES = {1: 32, 2: 32, 3: 32, 4: 32}
+    _round_size = _ROUND_SIZES.get(draft_round, 32)
+    _pick_in_round = pick_slot - (draft_round - 1) * 32  # approximate 1-based index within round
+    _slot_pressure = max(0.0, 1.0 - (_pick_in_round - 1) / max(_round_size - 1, 1))
+
+    # css_rank_within_pos: same ordinal formula as training — rank within same-
+    # position players still available. Precompute for the full pool so the inner
+    # loop doesn't repeat O(n²) work for each prospect.
+    css_within_pos_map: dict[int, float] = {}
+    for p in prospects:
+        pos      = p.position or "F"
+        this_q   = quality_map_inf[p.id]
+        same_pos = [x for x in prospects if (x.position or "F") == pos]
+        n_pos    = len(same_pos)
+        if n_pos > 1:
+            n_better = sum(1 for x in same_pos if quality_map_inf.get(x.id, 0.0) > this_q)
+            css_within_pos_map[p.id] = 1.0 - (n_better / n_pos)
+        else:
+            css_within_pos_map[p.id] = 1.0
+
     rows = []
     ids  = []
     for p in prospects:
@@ -289,21 +321,23 @@ def _score_pool_inner(
         css_norm = quality_map_inf[p.id]
 
         rows.append({
-            "position":          p.position,
-            "nationality":       p.nationality,
-            "height_cm":         p.height_cm,
-            "weight_kg":         p.weight_kg,
-            "draft_league":      p.draft_league,
-            "draft_league_tier": p.draft_league_tier,
-            "points_per_game":   p.points_per_game,
-            "gp_pre_draft":      p.games_played,
-            "ppg_prev_season":   p.ppg_prev_season,
-            "has_prev_season":   1 if p.ppg_prev_season is not None else 0,
-            "age_at_draft":      p.age_at_draft,
-            "overall_pick":      pick_slot,
-            "draft_round":       draft_round,
-            "css_rank_norm":     css_norm,
-            "rank_gap_norm":     rank_gap_map[p.id],
+            "position":            p.position,
+            "nationality":         p.nationality,
+            "height_cm":           p.height_cm,
+            "weight_kg":           p.weight_kg,
+            "draft_league":        p.draft_league,
+            "draft_league_tier":   p.draft_league_tier,
+            "points_per_game":     p.points_per_game,
+            "gp_pre_draft":        p.games_played,
+            "ppg_prev_season":     p.ppg_prev_season,
+            "has_prev_season":     1 if p.ppg_prev_season is not None else 0,
+            "age_at_draft":        p.age_at_draft,
+            "overall_pick":        pick_slot,
+            "draft_round":         draft_round,
+            "css_rank_norm":       css_norm,
+            "rank_gap_norm":       rank_gap_map[p.id],
+            "css_rank_within_pos": css_within_pos_map[p.id],
+            "slot_pressure":       _slot_pressure,
             **pf,
             **ctx,
         })

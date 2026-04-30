@@ -321,6 +321,36 @@ async def backtest_multi_year(
         raise HTTPException(status_code=500, detail=f"Multi-year backtest error: {e}")
 
 
+@router.post("/backtest/blend-sweep")
+async def backtest_blend_sweep(
+    years: list[int] | None = None,
+    css_weights: list[float] | None = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Sweep CSS/ML blend ratios and find which weight maximises top-1 accuracy.
+
+    Uses the currently loaded production model — does NOT retrain.
+    Evaluates each blend on held-out draft years (default: 2021–2024).
+
+    css_weight=1.0 means pure CSS rank; css_weight=0.0 means pure ML.
+    The production simulation uses css_weight=0.6 (hardcoded). This endpoint
+    tells you whether that is actually the best choice.
+
+    Returns results sorted by top-1 accuracy descending, plus a "best" entry
+    and a "current_production_blend" entry for direct comparison.
+    """
+    from app.ml.backtest import run_blend_sweep, BACKTEST_YEARS
+    try:
+        result = run_blend_sweep(db, css_weights=css_weights, years=years or BACKTEST_YEARS)
+        return {"status": "ok", "result": result}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Blend sweep failed")
+        raise HTTPException(status_code=500, detail=f"Blend sweep error: {e}")
+
+
 @router.get("/explain/{prospect_id}")
 @_limiter.limit("10/minute")
 async def explain_pick(

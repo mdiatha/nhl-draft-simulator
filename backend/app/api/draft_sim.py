@@ -73,6 +73,7 @@ class SimulateDraftRequest(BaseModel):
     seed: Optional[int] = None
     temperature: float = DEFAULT_TEMPERATURE  # controls pick randomness
     num_rounds: int = 7  # how many rounds to simulate (1-7)
+    css_weight: float = 0.0  # blend weight for CSS prior (0.0 = pure ML, 1.0 = pure CSS)
 
     @field_validator("temperature")
     @classmethod
@@ -86,6 +87,13 @@ class SimulateDraftRequest(BaseModel):
     def rounds_in_range(cls, v: int) -> int:
         if not 1 <= v <= 7:
             raise ValueError("num_rounds must be between 1 and 7")
+        return v
+
+    @field_validator("css_weight")
+    @classmethod
+    def css_weight_in_range(cls, v: float) -> float:
+        if not 0.0 <= v <= 1.0:
+            raise ValueError("css_weight must be between 0.0 and 1.0")
         return v
 
 
@@ -167,7 +175,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
     # version are automatically bypassed after a hot-swap — no explicit cache flush.
     from app.ml.registry import registry as _registry
     _model_hash = _registry.model_hash
-    cache_key = f"draft_v11:{_model_hash}:{seed}:{body.temperature}:{body.num_rounds}:{'-'.join(map(str, body.lottery_result))}"
+    cache_key = f"draft_v12:{_model_hash}:{seed}:{body.temperature}:{body.css_weight}:{body.num_rounds}:{'-'.join(map(str, body.lottery_result))}"
     if REDIS_OK and _redis:
         cached = _redis.get(cache_key)
         if cached:
@@ -242,7 +250,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
             _ml_rng = _ml_hi - _ml_lo if _ml_hi > _ml_lo else 1.0
             ml_norm = {pid: (s - _ml_lo) / _ml_rng for pid, s in scores.items()}
             scores = {
-                pid: 0.4 * ml_norm.get(pid, 0.5) + 0.6 * css_prior.get(pid, 0.5)
+                pid: (1.0 - body.css_weight) * ml_norm.get(pid, 0.5) + body.css_weight * css_prior.get(pid, 0.5)
                 for pid in scores
             }
 

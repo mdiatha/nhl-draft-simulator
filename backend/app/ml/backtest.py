@@ -485,6 +485,184 @@ def _agg_baseline(per_year: list[dict], baseline: str, key: str) -> dict:
     }
 
 
+def run_blend_sweep(
+    db,
+    css_weights: list[float] | None = None,
+    years: list[int] | None = None,
+) -> dict:
+    """
+    Sweep over CSS/ML blend ratios and measure top-1 accuracy on held-out years.
+
+    For each css_weight w in css_weights:
+        blended_score = w * css_prior + (1 - w) * ml_norm
+
+    Uses the already-trained production model (registry) — does NOT retrain.
+    Evaluates on the same pick groups as run_backtest() so results are directly
+    comparable to the standard backtest metrics.
+
+    Args:
+        css_weights: list of floats in [0, 1] to try (default: 0.0 to 1.0 in 0.1 steps)
+        years: list of draft years to evaluate over (default: BACKTEST_YEARS)
+
+    Returns:
+        {
+          "css_weights": [...],
+          "years_evaluated": [...],
+          "results": [
+            {"css_weight": 0.6, "ml_weight": 0.4, "top1_accuracy": 0.43, "top3_accuracy": ..., "mrr": ...},
+            ...
+          ],
+          "best": {"css_weight": ..., "top1_accuracy": ...},
+        }
+    """
+    import numpy as np
+    from collections import Counter, defaultdict
+    from app.ml.registry import registry as _registry
+    from app.models.draft_pick_historical import DraftPickHistorical
+    from app.models.gm_tendency_profile import GMTendencyProfile
+    from app.models.general_manager import GeneralManager
+
+    if not _registry.is_loaded:
+        raise ValueError("No trained model in registry. Run POST /api/ml/train first.")
+
+    if css_weights is None:
+        css_weights = [round(w, 2) for w in np.arange(0.0, 1.05, 0.1)]
+    if years is None:
+        years = BACKTEST_YEARS
+
+    model = _registry.model
+    assert model is not None
+
+    profiles = {p.gm_id: p for p in db.query(GMTendencyProfile).all()}
+    gms      = {gm.team_id: gm for gm in db.query(GeneralManager).all() if gm.team_id}
+
+    # Accumulate raw ranks per css_weight across all evaluated years
+    weight_ranks: dict[float, list[int]] = {w: [] for w in css_weights}
+    years_evaluated: list[int] = []
+
+    for test_year in years:
+        test_picks = (
+            db.query(DraftPickHistorical)
+            .filter(
+                DraftPickHistorical.year == test_year,
+                DraftPickHistorical.round <= 4,
+            )
+            .order_by(DraftPickHistorical.overall_pick)
+            .all()
+        )
+        if not test_picks:
+            logger.warning("blend_sweep: no picks for year=%d — skipping", test_year)
+            continue
+
+        years_evaluated.append(test_year)
+        quality      = _compute_predraft_quality(test_picks)
+        tier_ppg_med, tier_age_med = _cohort_tier_stats(test_picks)
+
+        pos_taken: Counter[str] = Counter()
+        team_pos_drafted: defaultdict[int, Counter[str]] = defaultdict(Counter)
+
+        from app.ml.features import NEGATIVE_WINDOW
+        for i, pick in enumerate(test_picks):
+            if not pick.team_id:
+                pos_taken[pick.position or "F"] += 1
+                continue
+
+            gm      = gms.get(pick.team_id)
+            profile = profiles.get(gm.id) if gm else None
+
+            pool = test_picks[i + 1 : i + 1 + NEGATIVE_WINDOW]
+            if not pool:
+                pos_taken[pick.position or "F"] += 1
+                team_pos_drafted[pick.team_id][pick.position or "F"] += 1
+                continue
+
+            candidates = [pick] + list(pool)
+            remaining  = test_picks[i:]
+
+            rows = []
+            for c in candidates:
+                c_css = quality.get(c.id, 0.5)
+                gm_feats = _gm_features(
+                    profile, c.position or "", c.draft_league or "", c.nationality or ""
+                )
+                ctx = _contextual_feats(
+                    c, remaining, i, pick.team_id,
+                    pos_taken, team_pos_drafted,
+                    tier_ppg_med, tier_age_med,
+                    quality_map=quality,
+                )
+                rows.append({
+                    "position":          c.position,
+                    "nationality":       c.nationality,
+                    "height_cm":         c.height_cm,
+                    "weight_kg":         c.weight_kg,
+                    "draft_league":      c.draft_league,
+                    "draft_league_tier": c.draft_league_tier,
+                    "points_per_game":   c.points_per_game,
+                    "gp_pre_draft":      c.gp_pre_draft,
+                    "ppg_prev_season":   c.ppg_prev_season,
+                    "has_prev_season":   1 if c.ppg_prev_season is not None else 0,
+                    "age_at_draft":      c.age_at_draft,
+                    "overall_pick":      pick.overall_pick,
+                    "draft_round":       pick.round,
+                    "css_rank_norm":     c_css,
+                    "rank_gap_norm":     max(quality.get(c2.id, 0.5) for c2 in candidates) - c_css,
+                    **gm_feats,
+                    **ctx,
+                })
+
+            df     = pd.DataFrame(rows)
+            X      = build_features(df)
+            ml_raw = model.predict_proba(X)[:, 1] if hasattr(model, "predict_proba") else model.predict(X)
+
+            # Normalize ML scores to [0, 1] within this candidate window
+            ml_lo, ml_hi = ml_raw.min(), ml_raw.max()
+            ml_norm = (ml_raw - ml_lo) / (ml_hi - ml_lo) if ml_hi > ml_lo else np.ones_like(ml_raw)
+
+            # CSS prior: higher css_rank_norm = better prospect
+            css_scores = np.array([quality.get(c.id, 0.5) for c in candidates])
+
+            for w in css_weights:
+                blended = w * css_scores + (1.0 - w) * ml_norm
+                ranked = sorted(zip(blended, candidates), key=lambda x: -x[0])
+                actual_rank = next(
+                    (rank + 1 for rank, (_, c) in enumerate(ranked) if c.id == pick.id),
+                    len(ranked),
+                )
+                weight_ranks[w].append(actual_rank)
+
+            pos_taken[pick.position or "F"] += 1
+            team_pos_drafted[pick.team_id][pick.position or "F"] += 1
+
+    # Build results table
+    sweep_results = []
+    for w in css_weights:
+        ranks = weight_ranks[w]
+        if not ranks:
+            continue
+        n = len(ranks)
+        sweep_results.append({
+            "css_weight":    w,
+            "ml_weight":     round(1.0 - w, 2),
+            "top1_accuracy": round(sum(1 for r in ranks if r == 1) / n, 4),
+            "top3_accuracy": round(sum(1 for r in ranks if r <= 3) / n, 4),
+            "top5_accuracy": round(sum(1 for r in ranks if r <= 5) / n, 4),
+            "mrr":           round(sum(1.0 / r for r in ranks) / n, 4),
+            "picks_evaluated": n,
+        })
+
+    sweep_results.sort(key=lambda x: -x["top1_accuracy"])
+    best = sweep_results[0] if sweep_results else None
+
+    return {
+        "css_weights_tested": css_weights,
+        "years_evaluated":    years_evaluated,
+        "current_production_blend": {"css_weight": 0.6, "ml_weight": 0.4},
+        "results":            sweep_results,
+        "best":               best,
+    }
+
+
 def _emit_backtest_metrics(metrics: dict) -> None:
     """Publish backtest results to Prometheus so they trend in Grafana."""
     try:

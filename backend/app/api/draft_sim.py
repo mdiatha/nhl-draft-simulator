@@ -266,6 +266,26 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
         )
         chosen = _sample_pick(available, scores, rng, effective_temp)
 
+        # Top 3 alternatives: highest-scored prospects the model considered
+        # (excluding the chosen player), used for the pick detail panel.
+        prospect_map = {p.id: p for p in available}
+        top_alts = sorted(
+            [pid for pid in scores if pid != chosen.id],
+            key=lambda pid: scores[pid],
+            reverse=True,
+        )[:3]
+        alternatives = [
+            {
+                "prospect_id":   pid,
+                "prospect_name": prospect_map[pid].name if pid in prospect_map else "Unknown",
+                "position":      prospect_map[pid].position if pid in prospect_map else None,
+                "css_rank":      prospect_map[pid].css_ranking if pid in prospect_map else None,
+                "ml_score":      round(scores[pid], 4),
+            }
+            for pid in top_alts
+            if pid in prospect_map
+        ]
+
         # Update draft state before moving to next pick
         pos_taken[chosen.position or "F"] += 1
         team_positions_drafted[team_id][chosen.position or "F"] += 1
@@ -288,6 +308,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
             "css_rank":        chosen.css_ranking,
             "points_per_game": chosen.points_per_game,
             "ml_score":        round(scores.get(chosen.id, 0.0), 4),
+            "alternatives":    alternatives,
         }
         if cal_intervals:
             ci = cal_intervals.get(chosen.id, {})

@@ -1,20 +1,20 @@
 import { useEffect, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import { buildApiUrl, draftApi, lotteryApi } from '../lib/api'
 import { useDraftStore } from '../stores/draftStore'
 import { getTeamColors, getTeamLogo } from '../lib/teamColors'
 import { DRAFT_YEAR } from '../lib/config'
 import type { DraftSimulationPick, LotteryPick } from '../types/index'
 
+const POS_COLORS: Record<string, string> = {
+  C: '#3b82f6', LW: '#10b981', RW: '#06b6d4', D: '#ef4444', G: '#f59e0b',
+}
+
 function getConfidenceBadge(pick: DraftSimulationPick): { label: string; className: string } | null {
   if (pick.in_prediction_set === false) {
-    return {
-      label: 'Volatile pick',
-      className: 'bg-amber-500/10 text-amber-300 border border-amber-500/30',
-    }
+    return { label: 'Volatile pick', className: 'bg-amber-500/10 text-amber-300 border border-amber-500/30' }
   }
-
   if (typeof pick.confidence === 'number') {
     return {
       label: pick.confidence >= 0.9 ? 'High confidence' : 'In model range',
@@ -23,8 +23,165 @@ function getConfidenceBadge(pick: DraftSimulationPick): { label: string; classNa
         : 'bg-blue-500/10 text-blue-300 border border-blue-500/30',
     }
   }
-
   return null
+}
+
+function PosBadge({ pos }: { pos?: string | null }) {
+  if (!pos) return null
+  return (
+    <span
+      className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0"
+      style={{ color: POS_COLORS[pos] ?? '#8892a4', background: (POS_COLORS[pos] ?? '#8892a4') + '22' }}
+    >
+      {pos}
+    </span>
+  )
+}
+
+function PickDetailPanel({ pick, onClose }: { pick: DraftSimulationPick; onClose: () => void }) {
+  const colors = getTeamColors(pick.abbreviation)
+  const confidenceBadge = getConfidenceBadge(pick)
+
+  // Normalise scores for the bar chart: chosen + alternatives
+  const allScores = [
+    { label: pick.prospect_name, score: pick.ml_score ?? 0, chosen: true, pos: pick.position, cssRank: pick.css_rank },
+    ...(pick.alternatives ?? []).map(a => ({
+      label: a.prospect_name, score: a.ml_score, chosen: false, pos: a.position ?? undefined, cssRank: a.css_rank ?? undefined,
+    })),
+  ]
+  const maxScore = Math.max(...allScores.map(s => s.score), 0.001)
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: 8 }}
+      transition={{ duration: 0.18 }}
+      className="col-span-1 md:col-span-2 xl:col-span-3 rounded-xl bg-bg-card border border-border-default overflow-hidden"
+      style={{ borderTop: `3px solid ${colors.primary}` }}
+    >
+      <div className="p-4">
+        {/* Header */}
+        <div className="flex items-start justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div
+              className="w-10 h-10 rounded flex items-center justify-center flex-shrink-0"
+              style={{ backgroundColor: colors.primary + '22' }}
+            >
+              <img
+                src={getTeamLogo(pick.abbreviation)}
+                alt={pick.abbreviation}
+                className="w-8 h-8 object-contain"
+                onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+              />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-white font-bold text-base">{pick.prospect_name}</span>
+                <PosBadge pos={pick.position} />
+              </div>
+              <div className="text-text-muted text-xs">
+                Pick #{pick.pick} · {pick.team_name}
+                {pick.css_rank ? ` · CSS #${pick.css_rank}` : ''}
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-text-muted hover:text-white transition-colors text-xl leading-none px-1"
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Left: pick facts */}
+          <div className="space-y-3">
+            <div className="text-xs font-semibold uppercase tracking-widest text-text-muted mb-2">Pick details</div>
+
+            <div className="grid grid-cols-2 gap-2">
+              {pick.draft_league && (
+                <div className="bg-bg-primary rounded-lg p-2.5">
+                  <div className="text-text-muted text-[10px] uppercase tracking-wide mb-0.5">League</div>
+                  <div className="text-white text-sm font-medium">{pick.draft_league}</div>
+                </div>
+              )}
+              {pick.nationality && (
+                <div className="bg-bg-primary rounded-lg p-2.5">
+                  <div className="text-text-muted text-[10px] uppercase tracking-wide mb-0.5">Nationality</div>
+                  <div className="text-white text-sm font-medium">{pick.nationality}</div>
+                </div>
+              )}
+              {pick.points_per_game != null && (
+                <div className="bg-bg-primary rounded-lg p-2.5">
+                  <div className="text-text-muted text-[10px] uppercase tracking-wide mb-0.5">PPG (pre-draft)</div>
+                  <div className="text-white text-sm font-medium">{pick.points_per_game.toFixed(2)}</div>
+                </div>
+              )}
+              {pick.ml_score != null && (
+                <div className="bg-bg-primary rounded-lg p-2.5">
+                  <div className="text-text-muted text-[10px] uppercase tracking-wide mb-0.5">Model score</div>
+                  <div className="text-white text-sm font-medium">{pick.ml_score.toFixed(3)}</div>
+                </div>
+              )}
+            </div>
+
+            {confidenceBadge && (
+              <div className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold ${confidenceBadge.className}`}>
+                {confidenceBadge.label === 'Volatile pick' ? '⚠ ' : '✓ '}
+                {confidenceBadge.label}
+              </div>
+            )}
+
+            {pick.in_prediction_set === false && (
+              <p className="text-text-muted text-xs leading-relaxed">
+                This pick fell outside the model's 90% prediction set — meaning it was a statistically
+                surprising choice relative to the GM's historical tendencies and CSS consensus.
+              </p>
+            )}
+          </div>
+
+          {/* Right: model score comparison */}
+          {allScores.length > 1 && (
+            <div>
+              <div className="text-xs font-semibold uppercase tracking-widest text-text-muted mb-3">Model considered</div>
+              <div className="space-y-2">
+                {allScores.map((s, i) => (
+                  <div key={i} className="space-y-0.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <PosBadge pos={s.pos} />
+                        <span className={`truncate ${s.chosen ? 'text-white font-semibold' : 'text-text-secondary'}`}>
+                          {s.label}
+                        </span>
+                        {s.cssRank && <span className="text-text-muted flex-shrink-0">#{s.cssRank}</span>}
+                      </div>
+                      <span className={`ml-2 flex-shrink-0 ${s.chosen ? 'text-accent-blue' : 'text-text-muted'}`}>
+                        {s.score.toFixed(3)}
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full bg-bg-primary overflow-hidden">
+                      <motion.div
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(s.score / maxScore) * 100}%` }}
+                        transition={{ duration: 0.4, delay: i * 0.06 }}
+                        className="h-full rounded-full"
+                        style={{ background: s.chosen ? colors.primary : '#374151' }}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="text-text-muted text-[10px] mt-3 leading-relaxed">
+                Scores reflect the blended ML + CSS ranking signal for this GM at this pick slot.
+                The chosen player had the highest combined score.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </motion.div>
+  )
 }
 
 export default function DraftPage() {
@@ -37,6 +194,7 @@ export default function DraftPage() {
   const [error, setError] = useState<string | null>(null)
   const [summary, setSummary] = useState<string | null>(null)
   const [isSummarizing, setIsSummarizing] = useState(false)
+  const [selectedPick, setSelectedPick] = useState<number | null>(null)
 
   const sharedOrderIds = (orderParam ?? '')
     .split(',')
@@ -46,7 +204,6 @@ export default function DraftPage() {
   const picks: DraftSimulationPick[] = draftResult
 
   useEffect(() => {
-    // If a shared seed is present without explicit order data, fetch the lottery result.
     if (seedParam && !orderParam && lotteryResult.length === 0) {
       lotteryApi.simulate(Number(seedParam))
         .then(data => {
@@ -60,6 +217,7 @@ export default function DraftPage() {
   async function simulateDraft(rerunLottery = false) {
     setIsSimulating(true)
     setError(null)
+    setSelectedPick(null)
     resetDraft()
     try {
       let lotteryOrderIds = lotteryResult.length > 0
@@ -67,7 +225,6 @@ export default function DraftPage() {
         : sharedOrderIds
       let currentSeed = activeSeed
 
-      // Re-simulate re-runs the lottery with a fresh seed first
       if (rerunLottery || lotteryOrderIds.length === 0) {
         const newSeed = Math.floor(Math.random() * 99999)
         const lotteryData = await lotteryApi.simulate(newSeed)
@@ -123,7 +280,6 @@ export default function DraftPage() {
       setIsSummarizing(false)
     }
   }
-
 
   if (lotteryResult.length === 0 && !seedParam && sharedOrderIds.length === 0) {
     return (
@@ -225,7 +381,6 @@ export default function DraftPage() {
       )}
 
       {picks.length > 0 && (() => {
-        // Group by round
         const byRound = new Map<number, typeof picks>()
         for (const pick of picks) {
           const r = pick.round ?? 1
@@ -233,7 +388,6 @@ export default function DraftPage() {
           byRound.get(r)!.push(pick)
         }
         const rounds = Array.from(byRound.entries()).sort(([a], [b]) => a - b)
-        const POS_COLORS: Record<string, string> = { C: '#3b82f6', LW: '#10b981', RW: '#06b6d4', D: '#ef4444', G: '#f59e0b' }
         let globalIdx = 0
         return (
           <div className="space-y-8">
@@ -248,57 +402,68 @@ export default function DraftPage() {
                   {roundPicks.map((pick) => {
                     const colors = getTeamColors(pick.abbreviation)
                     const confidenceBadge = getConfidenceBadge(pick)
+                    const isSelected = selectedPick === pick.pick
                     const idx = globalIdx++
                     return (
-                      <motion.div
-                        key={pick.pick}
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        transition={{ delay: Math.min(idx * 0.01, 0.5) }}
-                        className="flex flex-col p-3 rounded-lg bg-bg-card border border-border-subtle hover:bg-bg-hover transition-colors"
-                        style={{ borderLeft: `3px solid ${colors.primary}` }}
-                      >
-                        <div
-                          className="flex items-center gap-3 cursor-pointer"
-                          onClick={() => navigate(`/teams/${pick.team_id}`)}
+                      <>
+                        <motion.div
+                          key={pick.pick}
+                          initial={{ opacity: 0, y: 10 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: Math.min(idx * 0.01, 0.5) }}
+                          className={`flex flex-col p-3 rounded-lg bg-bg-card border transition-colors cursor-pointer ${
+                            isSelected
+                              ? 'border-accent-blue/60 bg-bg-hover'
+                              : 'border-border-subtle hover:bg-bg-hover'
+                          }`}
+                          style={{ borderLeft: `3px solid ${colors.primary}` }}
+                          onClick={() => setSelectedPick(isSelected ? null : pick.pick)}
                         >
-                          <div className="text-right flex-shrink-0 w-8">
-                            <div className="text-base font-black text-white leading-tight">{pick.pick}</div>
-                          </div>
-                          <div
-                            className="w-9 h-9 rounded flex items-center justify-center flex-shrink-0 overflow-hidden"
-                            style={{ backgroundColor: colors.primary + '22' }}
-                          >
-                            <img
-                              src={getTeamLogo(pick.abbreviation)}
-                              alt={pick.abbreviation}
-                              className="w-7 h-7 object-contain"
-                              onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
-                            />
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-white font-semibold text-sm truncate">
-                              {pick.prospect_name ?? 'TBD'}
+                          <div className="flex items-center gap-3">
+                            <div className="text-right flex-shrink-0 w-8">
+                              <div className="text-base font-black text-white leading-tight">{pick.pick}</div>
                             </div>
-                            <div className="text-text-muted text-xs truncate">
-                              {pick.team_name}
-                              {pick.css_rank && <span className="ml-1">· CSS #{pick.css_rank}</span>}
+                            <div
+                              className="w-9 h-9 rounded flex items-center justify-center flex-shrink-0 overflow-hidden"
+                              style={{ backgroundColor: colors.primary + '22' }}
+                            >
+                              <img
+                                src={getTeamLogo(pick.abbreviation)}
+                                alt={pick.abbreviation}
+                                className="w-7 h-7 object-contain"
+                                onError={e => { (e.currentTarget as HTMLImageElement).style.display = 'none' }}
+                              />
                             </div>
-                            {confidenceBadge && (
-                              <div className="mt-1">
-                                <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${confidenceBadge.className}`}>
-                                  {confidenceBadge.label}
-                                </span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-white font-semibold text-sm truncate">
+                                {pick.prospect_name ?? 'TBD'}
                               </div>
-                            )}
+                              <div className="text-text-muted text-xs truncate">
+                                {pick.team_name}
+                                {pick.css_rank && <span className="ml-1">· CSS #{pick.css_rank}</span>}
+                              </div>
+                              {confidenceBadge && (
+                                <div className="mt-1">
+                                  <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold ${confidenceBadge.className}`}>
+                                    {confidenceBadge.label}
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <PosBadge pos={pick.position} />
                           </div>
-                          {pick.position && (
-                            <span className="text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0" style={{ color: (POS_COLORS[pick.position] ?? '#8892a4'), background: ((POS_COLORS[pick.position] ?? '#8892a4') + '22') }}>
-                              {pick.position}
-                            </span>
+                        </motion.div>
+
+                        <AnimatePresence>
+                          {isSelected && (
+                            <PickDetailPanel
+                              key={`detail-${pick.pick}`}
+                              pick={pick}
+                              onClose={() => setSelectedPick(null)}
+                            />
                           )}
-                        </div>
-                      </motion.div>
+                        </AnimatePresence>
+                      </>
                     )
                   })}
                 </div>

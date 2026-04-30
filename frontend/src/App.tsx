@@ -8,7 +8,6 @@ const LotteryPage = lazy(() => import('./pages/LotteryPage'))
 const DraftPage = lazy(() => import('./pages/DraftPage'))
 const TeamPage = lazy(() => import('./pages/TeamPage'))
 const ProspectsPage = lazy(() => import('./pages/ProspectsPage'))
-const ScenarioPage = lazy(() => import('./pages/ScenarioPage'))
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'))
 
 function PageLoader() {
@@ -31,7 +30,6 @@ export default function App() {
             <Route path="/draft" element={<DraftPage />} />
             <Route path="/teams/:teamId" element={<TeamPage />} />
             <Route path="/prospects" element={<ProspectsPage />} />
-            <Route path="/scenario" element={<ScenarioPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </Suspense>

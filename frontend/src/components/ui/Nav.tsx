@@ -3,7 +3,6 @@ import { clsx } from 'clsx'
 
 const links = [
   { to: '/', label: 'Lottery' },
-  { to: '/scenario', label: 'What-If' },
   { to: '/prospects', label: 'Prospects' },
 ]
 

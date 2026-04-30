@@ -49,6 +49,14 @@ export interface LotterySimulationTeam {
   points?: number
 }
 
+export interface DraftPickAlternative {
+  prospect_id: number
+  prospect_name: string
+  position?: string | null
+  css_rank?: number | null
+  ml_score: number
+}
+
 export interface DraftSimulationPick {
   pick: number
   round?: number
@@ -67,6 +75,7 @@ export interface DraftSimulationPick {
   in_prediction_set?: boolean | null
   nc_score?: number | null
   confidence?: number | null
+  alternatives?: DraftPickAlternative[]
 }
 
 export interface Prospect {

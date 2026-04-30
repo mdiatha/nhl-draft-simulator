@@ -11,7 +11,6 @@ import pandas as pd
 from app.ml.registry import registry
 from app.ml.features import (
     build_features, _gm_features, _contextual_feats,
-    _css_list, _css_norm_within_list,
 )
 
 logger = logging.getLogger(__name__)
@@ -136,22 +135,24 @@ def _score_pool_inner(
 
     # Quality map: prospect_id → css_rank_norm, used by _contextual_feats to
     # compute pos_quality_rank_norm (rank within same-position available players).
-    # Use list-aware normalization: group by CSS list (na_skater/eur_skater/goalie),
-    # sort by raw css_ranking within each list, assign within-list ordinal rank.
-    # Prospects without css_ranking fall back to PPG percentile within their group.
+    # Must match training exactly: sort all CSS-ranked prospects globally by raw
+    # css_ranking, assign global ordinal rank, then apply sqrt normalization using
+    # the total ranked count as denominator. Training uses _compute_predraft_quality()
+    # which does the same global sort — per-list normalization was wrong because it
+    # inflated css_rank_norm for lower-ranked prospects who happen to be high within
+    # their list (e.g. CSS #152 goalie who is rank #11 of 15 goalies got ~0.5
+    # instead of the ~0.18 the model was trained with).
+    import math as _math
     quality_map_inf: dict[int, float] = {}
-    _css_groups: dict[str, list] = {}
-    for p in prospects:
-        if p.css_ranking:
-            lst = _css_list(p.position, p.nationality, p.draft_league)
-            _css_groups.setdefault(lst, []).append(p)
-        else:
-            quality_map_inf[p.id] = ppg_percentile.get(p.id, 0.5)
-    for lst, grp in _css_groups.items():
-        sorted_grp = sorted(grp, key=lambda p: p.css_ranking)
-        list_size = len(sorted_grp)
-        for within_rank, p in enumerate(sorted_grp, start=1):
-            quality_map_inf[p.id] = _css_norm_within_list(within_rank, list_size)
+    _css_ranked = [p for p in prospects if p.css_ranking]
+    _css_unranked = [p for p in prospects if not p.css_ranking]
+    if _css_ranked:
+        _sorted_all = sorted(_css_ranked, key=lambda p: p.css_ranking)
+        _cohort_size = len(_sorted_all)
+        for _ordinal, p in enumerate(_sorted_all, start=1):
+            quality_map_inf[p.id] = max(0.0, 1.0 - _math.sqrt((_ordinal - 1) / _cohort_size))
+    for p in _css_unranked:
+        quality_map_inf[p.id] = ppg_percentile.get(p.id, 0.15)
 
     # Build a fake team_pos_drafted defaultdict so _contextual_feats works
     # without needing a real team_id — team_positions IS the team's counter

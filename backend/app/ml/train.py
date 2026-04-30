@@ -65,22 +65,42 @@ def train(
       compatibility but no longer skips eval.
     """
     # ── Ranker base params ────────────────────────────────────────────────────
-    # rank:ndcg with @1 cutoff directly optimizes the metric we report, and
-    # gives more shaped gradients than pairwise for top-of-list problems
-    # (which is exactly our task — predict THE pick, not rank the whole pool).
-    base_params = dict(
-        objective="rank:ndcg",
-        eval_metric="ndcg@1",
-        learning_rate=0.03,
-        max_depth=5,
-        subsample=0.80,
-        colsample_bytree=0.75,
-        min_child_weight=5,
-        gamma=0.0,
-        reg_alpha=0.0,
-        reg_lambda=1.5,
-        random_state=42,
-    )
+    # rank:ndcg with @1 cutoff directly optimizes the metric we report.
+    # Defaults below are overridden by best_params.json if it contains HPO results
+    # (run python -m app.ml.hpo first to populate it).
+    _HPO_KEYS = {
+        "learning_rate", "max_depth", "subsample", "colsample_bytree",
+        "min_child_weight", "gamma", "reg_alpha", "reg_lambda",
+    }
+    _hpo_overrides: dict = {}
+    _hpo_n_estimators: int | None = None
+    _best_params_path = Path(__file__).parent / "best_params.json"
+    if _best_params_path.exists():
+        try:
+            _stored = json.loads(_best_params_path.read_text())
+            _candidates = _stored.get("best_params") or {}
+            _hpo_overrides = {k: v for k, v in _candidates.items() if k in _HPO_KEYS}
+            if "n_estimators" in _candidates:
+                _hpo_n_estimators = int(_candidates["n_estimators"])
+            if _hpo_overrides:
+                logger.info("train.hpo_params loaded n_estimators=%s %s", _hpo_n_estimators, _hpo_overrides)
+        except Exception as _e:
+            logger.warning("train.hpo_params_load_failed reason=%s", _e)
+
+    base_params = {
+        "objective":        "rank:ndcg",
+        "eval_metric":      "ndcg@1",
+        "learning_rate":    0.03,
+        "max_depth":        5,
+        "subsample":        0.80,
+        "colsample_bytree": 0.75,
+        "min_child_weight": 5,
+        "gamma":            0.0,
+        "reg_alpha":        0.0,
+        "reg_lambda":       1.5,
+        "random_state":     42,
+    }
+    base_params.update(_hpo_overrides)  # HPO results override defaults when present
     def _make_groups(split_df: pd.DataFrame) -> np.ndarray:
         """
         Build the XGBoost group array: number of rows per query group.
@@ -227,10 +247,13 @@ def train(
     # which averages over more val groups and is more stable.
     if raw_best_iter <= 10 and fold_best_iters:
         cv_median_iter = int(np.median(fold_best_iters))
-        best_iter = max(cv_median_iter, 50)  # floor at 50 to avoid trivial models
+        # Use HPO n_estimators as the floor if available — it was found by
+        # optimizing NDCG@1 on the same data and is more reliable than 50.
+        _floor = _hpo_n_estimators if _hpo_n_estimators else 50
+        best_iter = max(cv_median_iter, _floor)
         logger.info(
-            "Final split best_iter=%d is too low — using CV median=%d (floor 50)",
-            raw_best_iter, best_iter,
+            "Final split best_iter=%d is too low — using CV median=%d (floor %d)",
+            raw_best_iter, best_iter, _floor,
         )
     else:
         best_iter = max(raw_best_iter, 1)

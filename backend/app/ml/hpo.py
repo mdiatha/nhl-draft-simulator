@@ -131,17 +131,19 @@ def optimize(db, n_trials: int = DEFAULT_N_TRIALS) -> dict:
 
     def objective(trial) -> float:
         params = {
-            "objective":    "rank:pairwise",
-            "n_estimators": trial.suggest_int("n_estimators", 100, 600),
-            "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.15, log=True),
-            "max_depth":    trial.suggest_int("max_depth", 3, 7),
-            "subsample":    trial.suggest_float("subsample", 0.5, 1.0),
-            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.5, 1.0),
+            "objective":        "rank:ndcg",
+            "eval_metric":      "ndcg@1",
+            "n_estimators":     trial.suggest_int("n_estimators", 50, 800),
+            "learning_rate":    trial.suggest_float("learning_rate", 0.005, 0.15, log=True),
+            "max_depth":        trial.suggest_int("max_depth", 3, 8),
+            "subsample":        trial.suggest_float("subsample", 0.5, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.4, 1.0),
             "min_child_weight": trial.suggest_int("min_child_weight", 1, 20),
-            "reg_alpha":    trial.suggest_float("reg_alpha", 1e-4, 1.0, log=True),
-            "reg_lambda":   trial.suggest_float("reg_lambda", 1e-4, 1.0, log=True),
-            "tree_method":  "hist",
-            "verbosity":    0,
+            "gamma":            trial.suggest_float("gamma", 0.0, 5.0),
+            "reg_alpha":        trial.suggest_float("reg_alpha", 0.0, 5.0),
+            "reg_lambda":       trial.suggest_float("reg_lambda", 0.1, 5.0),
+            "random_state":     42,
+            "verbosity":        0,
         }
 
         fold_scores = []

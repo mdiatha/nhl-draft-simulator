@@ -5,7 +5,7 @@
 ![TypeScript](https://img.shields.io/badge/frontend-react%20%2B%20typescript-3178c6)
 ![Infra](https://img.shields.io/badge/iac-aws%20cdk-orange)
 
-A full-stack NHL draft product that simulates the 2025 NHL Entry Draft as realistically as possible. It combines a weighted lottery engine, a GM-tendency-aware draft simulator, an ML ranking model, a tool-use AI scout, and production AWS infrastructure.
+A full-stack NHL draft product that simulates the 2026 NHL Entry Draft as realistically as possible. It combines a weighted lottery engine, a GM-tendency-aware draft simulator, an ML ranking model, a tool-use AI scout, and production AWS infrastructure.
 
 ---
 

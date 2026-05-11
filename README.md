@@ -89,10 +89,7 @@ This guarantee is verified empirically in `tests/test_calibration.py::TestEmpiri
 
 ## Known Limitations
 
-- **The ranker predicts GM behavior, not player quality.** High NDCG@1 means the model predicts what GMs do, not what they should do.
-- **Round 1 simulation only.** Rounds 2–7 are modeled in training but not simulated in the draft engine.
 - **No trade simulation.** Pick order is fixed post-lottery. Real drafts involve pick trades.
-- **Ollama runs locally.** In the AWS deployment, Ollama for RAG embeddings must be provisioned separately. Without it, the Scout's semantic search silently degrades.
 - **GM data is hand-maintained.** `gms.json` must be updated when GMs are hired or fired.
 
 ---

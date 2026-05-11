@@ -62,3 +62,4 @@ Thumbs.db
 
 # Lambda build artifacts
 lambda/**/*.zip
+infrastructure/cdk/cdk.context.json

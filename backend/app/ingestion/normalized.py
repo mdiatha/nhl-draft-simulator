@@ -162,23 +162,39 @@ def sync_prospect(
     prospect.draft_class_id = draft_class.id
     prospect.name = full_name
     prospect.position = position
-    prospect.nationality = nationality
-    prospect.height_cm = height_cm
-    prospect.weight_kg = weight_kg
-    prospect.draft_league = draft_league
-    prospect.draft_league_tier = draft_league_tier
-    prospect.css_ranking = css_ranking
-    prospect.css_category = css_category
-    prospect.points = points
-    prospect.goals = goals
-    prospect.assists = assists
-    prospect.games_played = games_played
-    prospect.points_per_game = points_per_game
-    prospect.ppg_prev_season = ppg_prev_season
-    prospect.age_at_draft = age_at_draft
-    prospect.birth_date = birth_date
-    prospect.nhl_player_id = nhl_player_id
     prospect.is_active = True
+    if nationality is not None:
+        prospect.nationality = nationality
+    if height_cm is not None:
+        prospect.height_cm = height_cm
+    if weight_kg is not None:
+        prospect.weight_kg = weight_kg
+    if draft_league is not None:
+        prospect.draft_league = draft_league
+    if draft_league_tier is not None:
+        prospect.draft_league_tier = draft_league_tier
+    if css_ranking is not None:
+        prospect.css_ranking = css_ranking
+    if css_category is not None:
+        prospect.css_category = css_category
+    if points is not None:
+        prospect.points = points
+    if goals is not None:
+        prospect.goals = goals
+    if assists is not None:
+        prospect.assists = assists
+    if games_played is not None:
+        prospect.games_played = games_played
+    if points_per_game is not None:
+        prospect.points_per_game = points_per_game
+    if ppg_prev_season is not None:
+        prospect.ppg_prev_season = ppg_prev_season
+    if age_at_draft is not None:
+        prospect.age_at_draft = age_at_draft
+    if birth_date is not None:
+        prospect.birth_date = birth_date
+    if nhl_player_id is not None:
+        prospect.nhl_player_id = nhl_player_id
     db.flush()
     return prospect
 

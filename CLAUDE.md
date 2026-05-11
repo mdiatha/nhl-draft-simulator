@@ -61,7 +61,7 @@ curl http://localhost:8000/health                           # DB + Redis + model
 ### Agent / RAG (`backend/app/agent/`)
 - **scout.py** — Tool-use loop (up to `MAX_TOOL_ROUNDS=10`, exits on `end_turn`). Prompt caching via `CACHED_SYSTEM` + `_cached_tools()` (Anthropic ephemeral cache). MCP routing via `_create_message()` — uses `client.beta.messages` when `MCP_SERVERS` config is set.
 - **tools.py** — 10 tools: `get_gm_profile`, `get_top_prospects`, `get_team_needs`, `search_prospects`, `semantic_prospect_search`, `get_draft_history`, `get_ml_ranking`, `compare_prospects`, `get_prospect_detail`, `get_nhl_comp`. All inputs validated through Pydantic models before DB access.
-- **embeddings.py** — Indexes GM profiles, top-200 prospects (one rich prose document per prospect combining facts, style, and production trend), and team draft histories (2020–2024) into `scout_embeddings` via Ollama nomic-embed-text (768-dim). `build_index(db)` is called via `POST /api/agent/index`.
+- **embeddings.py** — Indexes top-200 prospects (one rich prose document per prospect combining facts, style, and production trend) and current NHL players into `scout_embeddings` via Ollama nomic-embed-text (768-dim). `build_index(db)` is called via `POST /api/agent/index`.
 - **memory.py** — Compresses conversation history when session exceeds 20 messages (Claude summarizes oldest turns into bullets, keeps 6 most recent verbatim).
 
 ### GM tendency engine (`backend/app/engines/tendency_engine.py`)

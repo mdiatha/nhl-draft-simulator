@@ -1,4 +1,3 @@
-import threading
 import time
 from contextlib import asynccontextmanager
 
@@ -129,42 +128,6 @@ def _check_config() -> None:
         )
 
 
-def _start_model_sync_thread(redis_url: str) -> None:
-    """Background thread: reload the model registry when another instance trains a new model.
-
-    After training, the active instance writes the new trained_at timestamp to
-    nhl:model:version in Redis.  This thread polls that key every 30 s and
-    calls registry.reload() when the version differs from what is in memory.
-    """
-    import redis as redis_lib
-    from app.ml.registry import registry
-
-    def _loop() -> None:
-        try:
-            r = redis_lib.Redis.from_url(
-                redis_url,
-                socket_connect_timeout=2,
-                socket_timeout=2,
-                decode_responses=True,
-            )
-        except Exception as exc:
-            logger.warning("model_sync.redis_unavailable", extra={"error": str(exc)})
-            return
-
-        while True:
-            time.sleep(30)
-            try:
-                latest = r.get("nhl:model:version")
-                current = registry.meta.get("trained_at") if registry.is_loaded else None
-                if latest and latest != current:
-                    logger.info("model_sync.reloading", extra={"new_version": latest})
-                    registry.reload()
-            except Exception as exc:
-                logger.debug("model_sync.check_failed", extra={"error": str(exc)})
-
-    thread = threading.Thread(target=_loop, daemon=True, name="model-sync")
-    thread.start()
-
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -180,8 +143,6 @@ async def lifespan(_app: FastAPI):
             "validation_auc": str(registry.meta.get("validation_auc", "unknown")),
             "mode": str(registry.meta.get("mode", "evaluation")),
         })
-
-    _start_model_sync_thread(settings.REDIS_URL)
 
     logger.info("app.startup", extra={"model_loaded": registry.is_loaded})
     yield

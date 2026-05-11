@@ -37,23 +37,13 @@ HTTP_REQUEST_DURATION = Histogram(
 SIMULATIONS_TOTAL = Counter(
     "draft_simulations_total",
     "Draft simulations completed",
-    ["status"],          # ok | error | cache_hit
+    ["status"],          # ok | error
 )
 
 SIMULATION_DURATION = Histogram(
     "draft_simulation_duration_seconds",
-    "Time to run a full draft simulation (excluding cache hits)",
+    "Time to run a full draft simulation",
     buckets=[0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
-)
-
-CACHE_HITS_TOTAL = Counter(
-    "redis_cache_hits_total",
-    "Simulation results served from Redis cache",
-)
-
-CACHE_MISSES_TOTAL = Counter(
-    "redis_cache_misses_total",
-    "Simulation results computed (cache miss)",
 )
 
 # ── ML model ──────────────────────────────────────────────────────────────────

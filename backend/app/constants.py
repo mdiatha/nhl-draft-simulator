@@ -91,22 +91,38 @@ def nat_group(nationality: str) -> str:
 
 def infer_league_key(league: str, tier: int | None = None) -> str:
     """
-    Map a league name (and optional numeric tier fallback) to the string key
-    used in GM tendency profiles and ML features.
+    Normalize a raw league name string to a canonical key used in ML features
+    and GM tendency profiles.
 
-    Return values: "tier1_CAN" | "tier1_USA" | "tier1_EUR" | "tier2" | "tier3"
-    The numeric tier is used only when the league name doesn't match any known league.
+    The NHL Records API returns inconsistent strings for the same league
+    (e.g. "SWEDEN", "SWEDEN-JR.", "SHL", "Swedish Hockey League" are all SHL).
+    This function canonicalizes before mapping so the model learns per-league
+    weights rather than per-string-variant weights.
+
+    Return values match LEAGUE_KEYS in features.py:
+      "OHL" | "WHL" | "QMJHL" | "USHL" | "NTDP" | "SHL" | "Liiga" | "KHL" | "other"
     """
     u = (league or "").upper()
-    if any(lg in u for lg in ("OHL", "WHL", "QMJHL")):
-        return "tier1_CAN"
-    if "NCAA" in u or "USHL" in u:
-        return "tier1_USA"
-    if any(lg in u for lg in ("SHL", "LIIGA", "KHL", "NLA", "EXTRALIGA")):
-        return "tier1_EUR"
-    # Fall back to numeric tier when league string is unrecognised
-    if tier == 1:
-        return "tier1_EUR"
-    if tier == 3:
-        return "tier3"
-    return "tier2"
+
+    if "OHL" in u:
+        return "OHL"
+    if "WHL" in u:
+        return "WHL"
+    if "QMJHL" in u or "LHJMQ" in u:
+        return "QMJHL"
+    # NTDP before USHL — "NTDP - USHL" should map to NTDP
+    if "NTDP" in u:
+        return "NTDP"
+    if "USHL" in u or "NCAA" in u or "HIGH-" in u or "BIG10" in u or "H-EAST" in u or "HIGH-MN" in u or "HIGH-MA" in u:
+        return "USHL"
+    # SHL / Swedish leagues — "SWEDEN", "SWEDEN-JR.", "SWEDEN-2", "SHL", "SWEDISH"
+    if "SHL" in u or "SWEDEN" in u or "SWEDISH" in u:
+        return "SHL"
+    # Finnish leagues — "FINLAND", "FINLAND-JR.", "LIIGA", "MESTIS"
+    if "LIIGA" in u or "FINLAND" in u or "MESTIS" in u:
+        return "Liiga"
+    # Russian/KHL — "KHL", "RUSSIA", "RUSSIA-JR.", "RUSSIA-2", "MHL"
+    if "KHL" in u or "RUSSIA" in u or "MHL" in u:
+        return "KHL"
+
+    return "other"

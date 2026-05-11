@@ -107,7 +107,7 @@ def _retrieve_similar_pgvector(
     doc_types: Optional[list[str]] = None,
     top_k: int = 5,
 ) -> list[dict]:
-    """Native pgvector cosine ANN — requires vector(1024) column + IVFFlat index."""
+    """Native pgvector cosine ANN — requires vector(768) column + IVFFlat index."""
     # Format vector literal for Postgres: '[0.1, 0.2, ...]'
     vec_str = "[" + ",".join(str(v) for v in query_embedding) + "]"
 

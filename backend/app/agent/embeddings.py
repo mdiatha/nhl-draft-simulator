@@ -243,33 +243,18 @@ def draft_history_to_text(team_name: str, year: int, picks: list) -> str:
 
 def build_index(db) -> int:
     """
-    Embed all GM profiles, prospects (with stat history), team draft histories,
-    and current NHL players, then upsert into scout_embeddings.
-    Returns the number of documents indexed.
+    Embed prospects (with stat history) and current NHL players, then upsert
+    into scout_embeddings. Returns the number of documents indexed.
     """
     from sqlalchemy.orm import Session
     from sqlalchemy import text
     from app.models import (
-        GMTendencyProfile, GeneralManager, Team, Prospect,
-        DraftPickHistorical, ProspectStatHistory,
+        Prospect,
+        ProspectStatHistory,
     )
     from app.agent.store import upsert_embedding
 
     count = 0
-
-    # ── GM profiles ──────────────────────────────────────────────────────────
-    profiles = (
-        db.query(GMTendencyProfile, GeneralManager, Team)
-        .join(GeneralManager, GMTendencyProfile.gm_id == GeneralManager.id)
-        .join(Team, GeneralManager.team_id == Team.id)
-        .filter(GeneralManager.is_active.is_(True))
-        .all()
-    )
-    for profile, gm, team in profiles:
-        doc = gm_profile_to_text(gm.name, team.full_name or team.abbreviation, profile)
-        vec = embed_text(doc)
-        upsert_embedding(db, doc_type="gm_profile", ref_id=gm.id, ref_name=gm.name, content=doc, embedding=vec)
-        count += 1
 
     # ── Prospects: one rich document per prospect ────────────────────────────
     # Clear existing prospect chunk types before reinserting fresh documents.
@@ -307,32 +292,6 @@ def build_index(db) -> int:
         vec = embed_text(doc)
         upsert_embedding(db, doc_type="prospect", ref_id=p.id, ref_name=p.name, content=doc, embedding=vec)
         count += 1
-
-    # ── Team draft histories (2020-2024) ─────────────────────────────────────
-    teams = db.query(Team).all()
-    for team in teams:
-        for year in range(2020, 2025):
-            picks = (
-                db.query(DraftPickHistorical)
-                .filter(
-                    DraftPickHistorical.team_id == team.id,
-                    DraftPickHistorical.year == year,
-                )
-                .order_by(DraftPickHistorical.overall_pick)
-                .all()
-            )
-            if not picks:
-                continue
-            team_name = team.full_name or team.abbreviation
-            doc = draft_history_to_text(team_name, year, picks)
-            ref_id = team.id * 10000 + year
-            vec = embed_text(doc)
-            upsert_embedding(
-                db, doc_type="draft_history",
-                ref_id=ref_id, ref_name=f"{team_name} {year} Draft",
-                content=doc, embedding=vec,
-            )
-            count += 1
 
     # ── NHL players (for get_nhl_comp) ────────────────────────────────────────
     from app.ingestion.nhl_players_ingestion import fetch_and_embed_nhl_players

@@ -11,15 +11,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, field_validator
 from sqlalchemy.orm import Session
 
-from app.database import get_db, get_redis
+from app.database import get_db
 from app.models import Team, GeneralManager, GMTendencyProfile, Prospect
 from app.ml.predict import score_pool_for_team, compute_pool_stats
 from app.ml.registry import registry
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/draft", tags=["draft"])
-
-_redis, REDIS_OK = get_redis()
 
 
 DEFAULT_TEMPERATURE = 0.25  # lower = more decisive; 1.0 = pure proportional sampling
@@ -160,24 +158,9 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
     round1_order = body.lottery_result
     full_pick_order = round1_order * body.num_rounds
 
-    from app.observability.metrics import (
-        SIMULATIONS_TOTAL, SIMULATION_DURATION, CACHE_HITS_TOTAL, CACHE_MISSES_TOTAL,
-    )
+    from app.observability.metrics import SIMULATIONS_TOTAL, SIMULATION_DURATION
     import time as _time
 
-    # Include model hash in cache key so stale simulations from the previous model
-    # version are automatically bypassed after a hot-swap — no explicit cache flush.
-    from app.ml.registry import registry as _registry
-    _model_hash = _registry.model_hash
-    cache_key = f"draft_v13:{_model_hash}:{seed}:{body.temperature}:{body.css_weight}:{body.num_rounds}:{'-'.join(map(str, body.lottery_result))}"
-    if REDIS_OK and _redis:
-        cached = _redis.get(cache_key)
-        if cached:
-            SIMULATIONS_TOTAL.labels(status="cache_hit").inc()
-            CACHE_HITS_TOTAL.inc()
-            return json.loads(cached)
-
-    CACHE_MISSES_TOTAL.inc()
     _sim_start = _time.perf_counter()
 
     # ── Load everything once ──────────────────────────────────────────────────
@@ -314,9 +297,6 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
         picks.append(pick_data)
 
     response = {"picks": picks, "seed": seed, "temperature": body.temperature, "total_picks": len(picks)}
-
-    if REDIS_OK and _redis:
-        _redis.setex(cache_key, 3600, json.dumps(response))
 
     SIMULATION_DURATION.observe(_time.perf_counter() - _sim_start)
     SIMULATIONS_TOTAL.labels(status="ok").inc()

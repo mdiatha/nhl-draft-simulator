@@ -1,6 +1,4 @@
 """Lottery API endpoints."""
-import hashlib
-import json
 import logging
 from typing import Optional
 
@@ -8,17 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.database import get_db, get_redis
+from app.database import get_db
 from app.models import Team, LotteryOdds, GeneralManager, GMTendencyProfile
 from app.engines.lottery_engine import draw_lottery, simulate_lottery_n_times
 from app.constants import DRAFT_YEAR
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/lottery", tags=["lottery"])
-
-_redis, REDIS_OK = get_redis()
-
-CACHE_TTL = 3600
 
 
 class SimulateLotteryRequest(BaseModel):
@@ -99,35 +93,8 @@ def _custom_lottery_teams(teams: list[LotterySimulationTeam]) -> list[dict]:
     return sorted(lottery_teams, key=lambda t: t["standing"])
 
 
-def _custom_teams_cache_key(seed: Optional[int], teams: list[LotterySimulationTeam]) -> str:
-    payload = [
-        {
-            "team_id": team.team_id,
-            "odds_pct": team.odds_pct,
-            "standing": team.standing,
-            "overall_rank": team.overall_rank,
-            "in_playoffs": team.in_playoffs,
-            "lottery_slot": team.lottery_slot,
-            "points": team.points,
-        }
-        for team in sorted(teams, key=lambda t: t.team_id)
-    ]
-    digest = hashlib.sha1(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
-    return f"lottery:{seed}:custom:{digest}"
-
-
 @router.post("/simulate")
 async def simulate_lottery(body: SimulateLotteryRequest, db: Session = Depends(get_db)):
-    cache_key = (
-        _custom_teams_cache_key(body.seed, body.teams)
-        if body.teams
-        else f"lottery:{body.seed}"
-    )
-    if REDIS_OK and _redis:
-        cached = _redis.get(cache_key)
-        if cached:
-            return json.loads(cached)
-
     teams = _custom_lottery_teams(body.teams) if body.teams else _get_lottery_teams(db)
     if not teams:
         raise HTTPException(404, "No lottery data. Run ingestion first.")
@@ -205,10 +172,7 @@ async def simulate_lottery(body: SimulateLotteryRequest, db: Session = Depends(g
             "points": points,
         })
 
-    response = {"pick_order": picks, "seed": body.seed}
-    if REDIS_OK and _redis:
-        _redis.setex(cache_key, CACHE_TTL, json.dumps(response))
-    return response
+    return {"pick_order": picks, "seed": body.seed}
 
 
 @router.get("/odds")

@@ -8,7 +8,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 from sqlalchemy.orm import Session
 
-from app.database import get_db, get_redis
+from app.database import get_db
 from app.middleware.auth import require_admin_key
 from app.ml.registry import registry
 
@@ -20,43 +20,16 @@ router = APIRouter(prefix="/ml", tags=["ml"])
 # Strict per-endpoint limiter for expensive CPU-bound operations
 _limiter = Limiter(key_func=get_remote_address)
 
-_redis, _REDIS_OK = get_redis()
-
-# ── Distributed training lock ─────────────────────────────────────────────────
-# threading.Lock() is per-process and does NOT prevent concurrent training on
-# multiple ECS tasks or instances. We use Redis SETNX as the cross-instance
-# guard, with the thread-local lock as a secondary in-process guard.
-_TRAINING_LOCK_KEY = "nhl:training_lock"
-_TRAINING_LOCK_TTL = 900  # seconds — generous upper-bound for a 14-min Lambda
-
 
 def _acquire_training_lock() -> bool:
-    """Return True if this process acquired the distributed training lock."""
-    if _REDIS_OK and _redis:
-        # nx=True → only set if key does not exist (atomic SETNX)
-        return bool(_redis.set(_TRAINING_LOCK_KEY, 1, nx=True, ex=_TRAINING_LOCK_TTL))
-    # Redis unavailable — fall back to the thread-local lock (single-instance protection)
     return registry.training_lock.acquire(blocking=False)
 
 
 def _release_training_lock() -> None:
-    if _REDIS_OK and _redis:
-        _redis.delete(_TRAINING_LOCK_KEY)
-    else:
-        try:
-            registry.training_lock.release()
-        except RuntimeError:
-            pass  # lock was never acquired (e.g. exception before acquire)
-
-
-def _flush_draft_cache() -> int:
-    """Delete all cached draft simulation results. Returns number of keys removed."""
-    if not _REDIS_OK or not _redis:
-        return 0
-    keys = _redis.keys("draft_v*")
-    if keys:
-        return _redis.delete(*keys)
-    return 0
+    try:
+        registry.training_lock.release()
+    except RuntimeError:
+        pass
 
 
 @router.post("/train", dependencies=[Depends(require_admin_key)])
@@ -118,14 +91,7 @@ async def train_model(final: bool = False, db: Session = Depends(get_db)):
         "training_samples": str(metrics.get("training_samples", 0)),
     })
 
-    # Notify other instances to reload — they poll nhl:model:version every 30 s
-    if _REDIS_OK and _redis:
-        _redis.set("nhl:model:version", metrics.get("trained_at", ""))
-
-    flushed = _flush_draft_cache()
-    logger.info("Redis draft cache flushed: %d keys removed", flushed)
-
-    return {"status": "ok", "metrics": metrics, "cache_keys_flushed": flushed}
+    return {"status": "ok", "metrics": metrics}
 
 
 @router.post("/reload", dependencies=[Depends(require_admin_key)])
@@ -195,8 +161,7 @@ async def rollback_model(version: str):
     if not reloaded:
         raise HTTPException(status_code=500, detail="Rollback uploaded but model failed to reload.")
 
-    flushed = _flush_draft_cache()
-    return {"status": "ok", "rolled_back_to": version, "cache_keys_flushed": flushed}
+    return {"status": "ok", "rolled_back_to": version}
 
 
 @router.post("/backtest")

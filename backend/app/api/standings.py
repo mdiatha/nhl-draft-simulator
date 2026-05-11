@@ -13,7 +13,6 @@ Results are cached in Redis for 5 minutes so the frontend can poll freely.
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Optional
@@ -24,16 +23,13 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from app.constants import LOTTERY_ODDS
-from app.database import get_db, get_redis
+from app.database import get_db
 from app.models import Team
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/standings", tags=["standings"])
 
 NHL_STANDINGS_URL = "https://api-web.nhle.com/v1/standings/now"
-CACHE_TTL = 300  # 5 minutes
-
-_redis, _REDIS_OK = get_redis()
 
 
 def _fetch_standings() -> list[dict]:
@@ -160,12 +156,6 @@ async def live_standings(db: Session = Depends(get_db)):
       lottery_slot (1-16 or null), lottery_odds_pct,
       team_id (DB primary key, for lottery simulate)
     """
-    cache_key = "standings:live"
-    if _REDIS_OK and _redis:
-        cached = _redis.get(cache_key)
-        if cached:
-            return JSONResponse(json.loads(cached))
-
     try:
         raw = _fetch_standings()
     except httpx.HTTPError as exc:
@@ -182,8 +172,5 @@ async def live_standings(db: Session = Depends(get_db)):
     }
     for team in payload["standings"]:
         team["team_id"] = db_teams.get(team["abbreviation"])
-
-    if _REDIS_OK and _redis:
-        _redis.setex(cache_key, CACHE_TTL, json.dumps(payload))
 
     return payload

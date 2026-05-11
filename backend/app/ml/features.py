@@ -68,7 +68,7 @@ NEGATIVE_WINDOW = 31
 
 # ── Feature columns ────────────────────────────────────────────────────────────
 
-LEAGUE_KEYS = ["tier1_CAN", "tier1_USA", "tier1_EUR", "tier2", "tier3"]
+LEAGUE_KEYS = ["OHL", "WHL", "QMJHL", "USHL", "NTDP", "SHL", "Liiga", "KHL", "other"]
 
 DRAFT_ROUNDS = [1, 2, 3, 4]
 
@@ -77,7 +77,7 @@ FEATURE_COLS: list[str] = (
     [f"pos_{p}" for p in POSITIONS]
     # Nationality group one-hot (5) — CAN, USA, NORDIC, SLAVIC, EUR_OTHER
     + [f"nat_{g}" for g in NAT_GROUPS]
-    # League one-hot (5) — replaces ordinal league_tier integer
+    # League one-hot (9) — individual leagues with enough volume; catch-all "other"
     + [f"league_{k}" for k in LEAGUE_KEYS]
     # Physical — position-relative deviation from positional median
     + ["height_norm", "weight_norm"]
@@ -359,7 +359,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
             index=df.index,
         )
     else:
-        league_key_series = pd.Series("tier2", index=df.index)
+        league_key_series = pd.Series("other", index=df.index)
     for lk in LEAGUE_KEYS:
         out[f"league_{lk}"] = (league_key_series == lk).astype(int)
 
@@ -550,9 +550,9 @@ def _cohort_tier_stats(year_picks: list) -> tuple[dict[str, float], dict[str, fl
     """
     Compute median PPG and median age per league group for a single draft cohort.
 
-    Keyed by infer_league_key() — e.g. "tier1_CAN", "tier1_EUR", "tier2" — so
-    that OHL players are normalized against other OHL players, not lumped with
-    KHL professionals or NCAA players in a single "tier 1" bucket.
+    Keyed by infer_league_key() — e.g. "OHL", "SHL", "other" — so that OHL
+    players are normalized against other OHL players, not lumped with KHL
+    professionals or NCAA/USHL players in the same bucket.
     """
     tier_ppg: dict[str, list] = {}
     tier_age: dict[str, list] = {}

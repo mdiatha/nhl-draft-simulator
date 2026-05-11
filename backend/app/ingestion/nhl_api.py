@@ -471,7 +471,7 @@ def seed_2025_prospects(db: Session, force: bool = False) -> int:
         g = pick.get("goals") or 0
         a = pick.get("assists") or 0
         pts = g + a
-        ppg = round(pts / gp, 2) if gp > 0 else 0.0
+        ppg = round(pts / gp, 2) if gp > 0 else None
 
         # Determine CSS category from position
         position = pick.get("position") or "F"
@@ -575,7 +575,7 @@ def fetch_prospect_stats(db: Session) -> int:
                 g = best.get("goals") or 0
                 a = best.get("assists") or 0
                 pts = g + a
-                ppg = round(pts / gp, 2) if gp > 0 else 0.0
+                ppg = round(pts / gp, 2) if gp > 0 else None
 
                 prospect.games_played = gp
                 prospect.goals = g
@@ -586,7 +586,7 @@ def fetch_prospect_stats(db: Session) -> int:
             if prev:
                 gp_prev = prev.get("gamesPlayed") or 0
                 pts_prev = (prev.get("goals") or 0) + (prev.get("assists") or 0)
-                prospect.ppg_prev_season = round(pts_prev / gp_prev, 2) if gp_prev > 0 else 0.0
+                prospect.ppg_prev_season = round(pts_prev / gp_prev, 2) if gp_prev > 0 else None
 
             if best or prev:
                 if prospect.player_id and best:
@@ -682,7 +682,7 @@ def fetch_historical_stats(db: Session) -> int:
                 g = best.get("goals") or 0
                 a = best.get("assists") or 0
                 pts = g + a
-                pick.points_per_game = round(pts / gp, 2) if gp > 0 else 0.0
+                pick.points_per_game = round(pts / gp, 2) if gp > 0 else None
                 pick.gp_pre_draft = gp
             else:
                 pick.points_per_game = 0.0  # mark as processed even if no data found
@@ -691,7 +691,7 @@ def fetch_historical_stats(db: Session) -> int:
             if prev:
                 gp_prev = prev.get("gamesPlayed") or 0
                 pts_prev = (prev.get("goals") or 0) + (prev.get("assists") or 0)
-                pick.ppg_prev_season = round(pts_prev / gp_prev, 2) if gp_prev > 0 else 0.0
+                pick.ppg_prev_season = round(pts_prev / gp_prev, 2) if gp_prev > 0 else None
 
             # Age at draft: derive from birthDate in API response
             birth_date_str = data.get("birthDate")

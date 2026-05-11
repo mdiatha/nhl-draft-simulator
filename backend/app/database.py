@@ -1,7 +1,3 @@
-import os
-from typing import Optional
-
-import redis as redis_lib
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -78,32 +74,3 @@ def get_read_db():
     finally:
         db.close()
 
-
-# ── Shared Redis client ───────────────────────────────────────────────────────
-# Single connection pool reused across all API modules.
-
-_redis_client: Optional[redis_lib.Redis] = None
-REDIS_OK: bool = False
-
-try:
-    _redis_client = redis_lib.Redis.from_url(
-        os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-        decode_responses=True,
-        socket_connect_timeout=2,
-        socket_timeout=2,
-    )
-    _redis_client.ping()
-    REDIS_OK = True
-except Exception:
-    if _redis_client is not None:
-        try:
-            _redis_client.close()
-        except Exception:
-            pass
-    _redis_client = None
-    REDIS_OK = False
-
-
-def get_redis() -> tuple[Optional[redis_lib.Redis], bool]:
-    """Return (redis_client, is_available). redis_client is None when Redis is down."""
-    return _redis_client, REDIS_OK

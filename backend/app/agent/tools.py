@@ -410,6 +410,27 @@ def _find_team(team_name: str, db: Session):
     return team
 
 
+def _find_team_with_gm_and_profile(team_name: str, db: Session):
+    """Return (team, gm, profile) in one JOIN query instead of three round trips."""
+    from app.models import Team, GeneralManager, GMTendencyProfile
+
+    q = team_name.strip()
+    row = (
+        db.query(Team, GeneralManager, GMTendencyProfile)
+        .outerjoin(
+            GeneralManager,
+            (GeneralManager.team_id == Team.id) & (GeneralManager.is_active.is_(True)),
+        )
+        .outerjoin(GMTendencyProfile, GMTendencyProfile.gm_id == GeneralManager.id)
+        .filter((Team.full_name.ilike(f"%{q}%")) | (Team.abbreviation.ilike(q)))
+        .order_by(GMTendencyProfile.computed_at.desc())
+        .first()
+    )
+    if row is None:
+        return None, None, None
+    return row[0], row[1], row[2]
+
+
 def _doc_type_label(doc_type: str) -> str:
     labels = {
         "prospect": "prospect summary",
@@ -428,27 +449,12 @@ def _compact_evidence(content: str, max_lines: int = 3) -> str:
 
 
 def _get_gm_profile(team_name: str, db: Session) -> str:
-    from app.models import Team, GeneralManager, GMTendencyProfile
+    team, gm, profile = _find_team_with_gm_and_profile(team_name, db)
 
-    team = _find_team(team_name, db)
     if not team:
         return json.dumps({"error": f"Team '{team_name}' not found"})
-
-    gm = db.query(GeneralManager).filter(
-        GeneralManager.team_id == team.id,
-        GeneralManager.is_active.is_(True),
-    ).first()
-
     if not gm:
         return json.dumps({"team": team.full_name, "error": "No active GM found"})
-
-    profile = (
-        db.query(GMTendencyProfile)
-        .filter(GMTendencyProfile.gm_id == gm.id)
-        .order_by(GMTendencyProfile.computed_at.desc())
-        .first()
-    )
-
     if not profile:
         return json.dumps({"team": team.full_name, "gm": gm.name, "error": "No tendency profile computed yet"})
 
@@ -498,34 +504,28 @@ def _get_top_prospects(position: str, limit: int, db: Session) -> str:
 
 
 def _get_team_needs(team_name: str, db: Session) -> str:
-    from app.models import Team, GeneralManager, GMTendencyProfile, Prospect
-    from collections import Counter
+    from app.models import Prospect
+    from sqlalchemy.sql import func
 
-    team = _find_team(team_name, db)
+    team, gm, profile = _find_team_with_gm_and_profile(team_name, db)
     if not team:
         return json.dumps({"error": f"Team '{team_name}' not found"})
-
-    gm = db.query(GeneralManager).filter(
-        GeneralManager.team_id == team.id,
-        GeneralManager.is_active.is_(True),
-    ).first()
-
     if not gm:
         return json.dumps({"team": team.full_name, "error": "No active GM found"})
 
-    profile = (
-        db.query(GMTendencyProfile)
-        .filter(GMTendencyProfile.gm_id == gm.id)
-        .first()
-    )
-
     pos_weights = profile.position_weights if profile else {}
 
-    # Draft class availability: what share of the 2026 class is each position?
-    all_prospects = db.query(Prospect.position).all()
-    total = len(all_prospects)
-    class_counts: Counter = Counter(p.position or "F" for p in all_prospects)
-    class_rates = {pos: count / total for pos, count in class_counts.items()} if total else {}
+    # Draft class availability: aggregate in DB instead of fetching all rows
+    rows = (
+        db.query(
+            func.coalesce(Prospect.position, "F").label("pos"),
+            func.count().label("cnt"),
+        )
+        .group_by(func.coalesce(Prospect.position, "F"))
+        .all()
+    )
+    total = sum(r.cnt for r in rows)
+    class_rates = {r.pos: r.cnt / total for r in rows} if total else {}
 
     # Need = how much the GM wants this position vs. how available it is.
     # A high GM weight against a thin position in the class = genuine need.

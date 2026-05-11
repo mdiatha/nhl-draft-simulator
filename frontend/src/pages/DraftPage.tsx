@@ -173,8 +173,7 @@ function PickDetailPanel({ pick, onClose }: { pick: DraftSimulationPick; onClose
                 ))}
               </div>
               <p className="text-text-muted text-[10px] mt-3 leading-relaxed">
-                Scores reflect the blended ML + CSS ranking signal for this GM at this pick slot.
-                The chosen player had the highest combined score.
+                Scores are the raw ML model output for this GM at this pick slot. CSS rank is one of the model's input features alongside GM tendency, position need, and prospect quality.
               </p>
             </div>
           )}

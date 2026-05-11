@@ -1,4 +1,4 @@
-# NHL Draft Simulator 2025
+# NHL Draft Simulator 2026
 
 ![CI](https://github.com/your-org/nhl-draft-simulator/actions/workflows/ci.yml/badge.svg)
 ![Python](https://img.shields.io/badge/python-3.11-blue)

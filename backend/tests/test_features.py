@@ -90,13 +90,13 @@ class TestBuildFeatures:
 
     def test_league_one_hot_ohl(self):
         out = build_features(_make_df(_minimal_row(draft_league="OHL")))
-        assert out["league_tier1_CAN"].iloc[0] == 1
-        for key in [k for k in LEAGUE_KEYS if k != "tier1_CAN"]:
+        assert out["league_OHL"].iloc[0] == 1
+        for key in [k for k in LEAGUE_KEYS if k != "OHL"]:
             assert out[f"league_{key}"].iloc[0] == 0
 
     def test_league_one_hot_shl(self):
         out = build_features(_make_df(_minimal_row(draft_league="SHL")))
-        assert out["league_tier1_EUR"].iloc[0] == 1
+        assert out["league_SHL"].iloc[0] == 1
 
     def test_has_prev_season_flag(self):
         with_prev = build_features(_make_df(_minimal_row(ppg_prev_season=0.8)))
@@ -154,7 +154,7 @@ class TestContextualFeats:
 
     def test_goalie_ppg_norm_is_neutral(self):
         p = self._make_prospect(pos="G", ppg=0.05)
-        result = _contextual_feats(p, [p], 0, 1, Counter(), defaultdict(Counter), {"tier1_CAN": 1.0}, {})
+        result = _contextual_feats(p, [p], 0, 1, Counter(), defaultdict(Counter), {"OHL": 1.0}, {})
         assert result["ppg_league_norm"] == 1.0
 
     def test_unknown_league_ppg_norm_is_neutral(self):
@@ -164,7 +164,7 @@ class TestContextualFeats:
 
     def test_ppg_league_norm_computed_correctly(self):
         p = self._make_prospect(pos="C", ppg=2.0, league="OHL")
-        result = _contextual_feats(p, [p], 0, 1, Counter(), defaultdict(Counter), {"tier1_CAN": 1.0}, {})
+        result = _contextual_feats(p, [p], 0, 1, Counter(), defaultdict(Counter), {"OHL": 1.0}, {})
         assert abs(result["ppg_league_norm"] - 2.0) < 1e-6
 
     def test_pos_taken_before_norm_zero_at_start(self):
@@ -226,7 +226,7 @@ class TestGmFeatures:
     def test_profile_lookup(self):
         profile = MagicMock()
         profile.position_weights = {"C": 0.45}
-        profile.league_weights = {"tier1_CAN": 0.60}
+        profile.league_weights = {"OHL": 0.60}
         profile.nationality_weights = {"CAN": 0.55}
         result = _gm_features(profile, "C", "OHL", "CAN")
         assert result["gm_pos_weight"] == 0.45

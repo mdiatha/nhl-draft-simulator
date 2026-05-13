@@ -99,18 +99,15 @@ class AnthropicCircuitBreaker:
                 self._opened_at = None
 
     async def record_failure(self) -> None:
-        from app.observability.metrics import SCOUT_CIRCUIT_BREAKER_OPEN
         async with self._lock:
             now = time.monotonic()
             self._failures.append(now)
             self._evict_old_failures(now)
 
             if self._state == CircuitState.HALF_OPEN:
-                # Probe failed — re-open immediately
                 self._state = CircuitState.OPEN
                 self._opened_at = now
                 logger.warning("circuit_breaker.reopened — probe failed")
-                SCOUT_CIRCUIT_BREAKER_OPEN.inc()
             elif len(self._failures) >= self._threshold:
                 self._state = CircuitState.OPEN
                 self._opened_at = now
@@ -118,14 +115,11 @@ class AnthropicCircuitBreaker:
                     "circuit_breaker.opened failures=%d window=%.0fs",
                     len(self._failures), self._window,
                 )
-                SCOUT_CIRCUIT_BREAKER_OPEN.inc()
 
     # ── Context manager (convenience) ─────────────────────────────────────────
 
     async def __aenter__(self):
-        from app.observability.metrics import SCOUT_CIRCUIT_BREAKER_REJECTED
         if not await self.allow_request():
-            SCOUT_CIRCUIT_BREAKER_REJECTED.inc()
             raise CircuitOpenError(
                 "The Scout analyst is temporarily unavailable — Anthropic API degraded. "
                 "Please try again in a moment."

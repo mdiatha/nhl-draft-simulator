@@ -663,21 +663,5 @@ def run_blend_sweep(
     }
 
 
-def _emit_backtest_metrics(metrics: dict) -> None:
-    """Publish backtest results to Prometheus so they trend in Grafana."""
-    try:
-        from app.observability.metrics import (
-            BACKTEST_TOP1_ACCURACY, BACKTEST_TOP3_ACCURACY,
-            BACKTEST_MRR, BACKTEST_WORST_RANK,
-        )
-        if metrics.get("top1_accuracy") is not None:
-            BACKTEST_TOP1_ACCURACY.set(metrics["top1_accuracy"])
-        if metrics.get("top3_accuracy") is not None:
-            BACKTEST_TOP3_ACCURACY.set(metrics["top3_accuracy"])
-        if metrics.get("mrr") is not None:
-            BACKTEST_MRR.set(metrics["mrr"])
-        worst = metrics.get("worst_misses", [])
-        if worst:
-            BACKTEST_WORST_RANK.set(max(w["actual_rank"] for w in worst))
-    except Exception as exc:
-        logger.warning("backtest.metrics_emit_failed error=%s", exc)
+def _emit_backtest_metrics(_metrics: dict) -> None:
+    pass

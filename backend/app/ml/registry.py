@@ -117,17 +117,6 @@ class ModelRegistry:
                         "calibrated":     self._calibration is not None,
                     },
                 )
-                # Emit model age gauge
-                try:
-                    from app.observability.metrics import MODEL_AGE_DAYS
-                    trained_at_str = self._meta.get("trained_at")
-                    if trained_at_str:
-                        from datetime import datetime, timezone
-                        trained_at = datetime.fromisoformat(trained_at_str)
-                        age_days = (datetime.now(timezone.utc) - trained_at).total_seconds() / 86400
-                        MODEL_AGE_DAYS.set(age_days)
-                except Exception:
-                    pass
                 return True
             except Exception as exc:
                 logger.error("model.load_failed", extra={"error": str(exc)})

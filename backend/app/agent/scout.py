@@ -190,31 +190,6 @@ async def _create_message(client, *, model: str, max_tokens: int, messages: list
     return await client.messages.create(**kwargs)
 
 
-def _record_usage(usage) -> None:
-    """Emit Anthropic token usage (including prompt cache) to Prometheus."""
-    if not usage:
-        return
-    from app.observability.metrics import (
-        SCOUT_PROMPT_CACHE_READ_TOKENS,
-        SCOUT_PROMPT_CACHE_WRITE_TOKENS,
-        SCOUT_INPUT_TOKENS,
-        SCOUT_OUTPUT_TOKENS,
-    )
-    cache_read  = getattr(usage, "cache_read_input_tokens", 0) or 0
-    cache_write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-    input_tok   = getattr(usage, "input_tokens", 0) or 0
-    output_tok  = getattr(usage, "output_tokens", 0) or 0
-
-    if cache_read:
-        SCOUT_PROMPT_CACHE_READ_TOKENS.inc(cache_read)
-    if cache_write:
-        SCOUT_PROMPT_CACHE_WRITE_TOKENS.inc(cache_write)
-    if input_tok:
-        SCOUT_INPUT_TOKENS.inc(input_tok)
-    if output_tok:
-        SCOUT_OUTPUT_TOKENS.inc(output_tok)
-
-
 # ── Topic guardrail ───────────────────────────────────────────────────────────
 
 async def _is_on_topic(client, model: str, message: str) -> bool:
@@ -373,9 +348,6 @@ async def chat(db: Session, session_id: str, user_message: str,
     Persists the conversation turn to the database.
     """
     from app.config import settings
-    from app.observability.metrics import SCOUT_REQUESTS_TOTAL
-
-    SCOUT_REQUESTS_TOTAL.labels(mode="sync").inc()
 
     if not settings.ANTHROPIC_API_KEY:
         return (
@@ -419,9 +391,6 @@ async def chat_stream(
     Only the final text response is streamed token-by-token.
     """
     from app.config import settings
-    from app.observability.metrics import SCOUT_REQUESTS_TOTAL
-
-    SCOUT_REQUESTS_TOTAL.labels(mode="stream").inc()
 
     if not settings.ANTHROPIC_API_KEY:
         yield f"data: {json.dumps({'token': 'The Scout is offline — ANTHROPIC_API_KEY not configured.'})}\n\n"
@@ -440,8 +409,6 @@ async def chat_stream(
     # Circuit breaker check up front
     try:
         if not await anthropic_breaker.allow_request():
-            from app.observability.metrics import SCOUT_CIRCUIT_BREAKER_REJECTED
-            SCOUT_CIRCUIT_BREAKER_REJECTED.inc()
             yield f"data: {json.dumps({'token': 'The Scout is temporarily unavailable. Please try again shortly.'})}\n\n"
             yield f"data: {json.dumps({'done': True})}\n\n"
             return
@@ -462,7 +429,7 @@ async def chat_stream(
             response = await _create_message(
                 client, model=settings.ANTHROPIC_MODEL, max_tokens=800, messages=messages
             )
-            _record_usage(getattr(response, "usage", None))
+    
             if response.stop_reason != "tool_use":
                 break
             # Stuck-loop guard
@@ -504,8 +471,7 @@ async def chat_stream(
                 if use_pubsub:
                     await publish_token(settings.REDIS_URL, session_id, msg_id, text)
 
-            final_message = await stream.get_final_message()
-            _record_usage(getattr(final_message, "usage", None))
+            await stream.get_final_message()
 
         reply = "".join(full_reply)
         store.save_message(db, session_id, "user", user_message)
@@ -526,30 +492,24 @@ async def chat_stream(
 
 async def _run_tool_loop(client, messages: list[dict], db: Session, model: str) -> str:
     """Execute tool calls until Claude produces a final text response."""
-    from app.observability.metrics import SCOUT_TOOL_ROUNDS
     rounds = 0
     last_tool_signature: str | None = None
 
     for _ in range(MAX_TOOL_ROUNDS):
         response = await _create_message(client, model=model, max_tokens=800, messages=messages)
-        _record_usage(getattr(response, "usage", None))
 
         if response.stop_reason != "tool_use":
-            SCOUT_TOOL_ROUNDS.observe(rounds)
             return _extract_text(response)
 
         # Detect stuck loop: same tool call twice in a row → exit early
         tool_sig = _tool_signature(response)
         if tool_sig and tool_sig == last_tool_signature:
             logger.warning("scout.tool_loop_stuck signature=%s — exiting early", tool_sig)
-            SCOUT_TOOL_ROUNDS.observe(rounds)
             return _extract_text(response)
         last_tool_signature = tool_sig
 
         messages = await _process_tool_turn(response, messages, db)
         rounds += 1
-
-    SCOUT_TOOL_ROUNDS.observe(rounds)
     # All rounds exhausted — one final call without tools
     response = await client.messages.create(
         model=model,
@@ -557,7 +517,6 @@ async def _run_tool_loop(client, messages: list[dict], db: Session, model: str) 
         system=CACHED_SYSTEM,
         messages=messages,
     )
-    _record_usage(getattr(response, "usage", None))
     return _extract_text(response)
 
 
@@ -634,54 +593,17 @@ async def _run_tool(name: str, inputs: dict, db: Session) -> str:
     These spans appear in Jaeger/Zipkin/AWS X-Ray as child spans of the
     parent request trace, enabling per-tool latency breakdown in production.
     """
-    from app.observability.metrics import SCOUT_TOOL_CALLS_TOTAL, SCOUT_TOOL_DURATION
-
-    # Acquire OTel tracer — no-op tracer if OTel is not configured
-    try:
-        from opentelemetry import trace as _otel_trace
-        _tracer = _otel_trace.get_tracer("scout.agent")
-    except ImportError:
-        _tracer = None
-
     t0 = time.perf_counter()
-
-    if _tracer:
-        span_ctx = _tracer.start_as_current_span(
-            f"scout.tool.{name}",
-            attributes={
-                "scout.tool.name": name,
-                "scout.tool.input_keys": ",".join(inputs.keys()),
-            },
-        )
-    else:
-        from contextlib import nullcontext
-        span_ctx = nullcontext()
-
     try:
-        with span_ctx as span:
-            result = await asyncio.to_thread(execute_tool, name, inputs, db)
-            elapsed = time.perf_counter() - t0
-            SCOUT_TOOL_CALLS_TOTAL.labels(tool=name, status="ok").inc()
-            SCOUT_TOOL_DURATION.labels(tool=name).observe(elapsed)
-            if span and hasattr(span, "set_attribute"):
-                span.set_attribute("scout.tool.status", "ok")
-                span.set_attribute("scout.tool.elapsed_ms", round(elapsed * 1000, 1))
-            logger.info(
-                "scout.tool_called tool=%s elapsed_ms=%.1f",
-                name, elapsed * 1000,
-                extra={"tool": name, "input": inputs},
-            )
-            return result
-    except Exception as exc:
+        result = await asyncio.to_thread(execute_tool, name, inputs, db)
         elapsed = time.perf_counter() - t0
-        SCOUT_TOOL_CALLS_TOTAL.labels(tool=name, status="error").inc()
-        SCOUT_TOOL_DURATION.labels(tool=name).observe(elapsed)
-        try:
-            if span_ctx and hasattr(span_ctx, "set_attribute"):
-                span_ctx.set_attribute("scout.tool.status", "error")
-                span_ctx.record_exception(exc)
-        except Exception:
-            pass
+        logger.info(
+            "scout.tool_called tool=%s elapsed_ms=%.1f",
+            name, elapsed * 1000,
+            extra={"tool": name, "input": inputs},
+        )
+        return result
+    except Exception as exc:
         raise exc
 
 

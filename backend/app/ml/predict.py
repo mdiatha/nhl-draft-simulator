@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 import statistics
-import time as _time
 from collections import Counter, defaultdict
 
 import pandas as pd
@@ -93,31 +92,13 @@ def score_pool_for_team(
     if not registry.is_loaded:
         return {}
 
-    _t_start = _time.perf_counter()
-
     try:
         return _score_pool_inner(
             prospects, profile, pick_slot, draft_state, pool_stats, draft_round, db
         )
     except Exception as exc:
-        try:
-            from app.observability.metrics import MODEL_PREDICTION_ERRORS
-            MODEL_PREDICTION_ERRORS.inc()
-        except Exception:
-            pass
         logger.exception("score_pool_for_team.failed error=%s", exc)
         raise
-    finally:
-        duration = _time.perf_counter() - _t_start
-        try:
-            from app.observability.metrics import (
-                MODEL_PREDICTIONS_TOTAL, MODEL_PREDICTION_DURATION, MODEL_PREDICTION_POOL_SIZE,
-            )
-            MODEL_PREDICTIONS_TOTAL.labels(source="draft_sim").inc()
-            MODEL_PREDICTION_DURATION.observe(duration)
-            MODEL_PREDICTION_POOL_SIZE.observe(len(prospects))
-        except Exception:
-            pass
 
 
 def _score_pool_inner(

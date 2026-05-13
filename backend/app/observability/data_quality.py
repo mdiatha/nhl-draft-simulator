@@ -79,15 +79,7 @@ class QualityReport:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _record(report: QualityReport, result: CheckResult) -> None:
-    """Append result, emit Prometheus counter, and write a structured log."""
     report.checks.append(result)
-
-    # Lazy import to avoid circular import at module load time
-    try:
-        from app.observability.metrics import DATA_QUALITY_CHECKS
-        DATA_QUALITY_CHECKS.labels(check=result.name, result=result.status.value).inc()
-    except Exception:
-        pass  # metrics not yet initialised (e.g. during unit tests)
 
     log_fn = logger.warning if result.status == CheckStatus.WARN else (
         logger.error if result.status == CheckStatus.FAIL else logger.info
@@ -242,14 +234,6 @@ def run_ingestion_checks(db) -> QualityReport:
             "gm_coverage", CheckStatus.PASS,
             f"{active_gm_count} active GMs for {team_count} teams.",
         ))
-
-    # Update Prometheus gauges with current counts
-    try:
-        from app.observability.metrics import PROSPECTS_LOADED, PROSPECTS_WITH_PREV_SEASON
-        PROSPECTS_LOADED.set(n_prospects)
-        PROSPECTS_WITH_PREV_SEASON.set(with_prev)
-    except Exception:
-        pass
 
     _log_report_summary(report, "ingestion")
     return report
@@ -475,19 +459,7 @@ def validate_prospect_batch(prospects: list[dict]) -> tuple[list[dict], list[dic
                 "ingestion.prospect_schema_invalid name=%s errors=%s",
                 p.get("name", "unknown"), errors,
             )
-            try:
-                from app.observability.metrics import DATA_QUALITY_CHECKS
-                DATA_QUALITY_CHECKS.labels(check="prospect_schema", result="fail").inc()
-            except Exception:
-                pass
             invalid.append({"prospect": p, "errors": errors})
-
-    if valid:
-        try:
-            from app.observability.metrics import DATA_QUALITY_CHECKS
-            DATA_QUALITY_CHECKS.labels(check="prospect_schema", result="pass").inc(len(valid))
-        except Exception:
-            pass
 
     return valid, invalid
 

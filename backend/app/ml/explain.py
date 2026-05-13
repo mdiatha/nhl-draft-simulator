@@ -5,7 +5,6 @@ single (prospect, team, pick_number) combination. Returns the top-N features
 by absolute impact, making model reasoning transparent.
 """
 import logging
-import time as _time
 from typing import Optional
 
 import numpy as np
@@ -37,13 +36,6 @@ def explain_prospect_pick(
             "base_value": float,  # expected model output (log-odds)
         }
     """
-    _t0 = _time.perf_counter()
-    try:
-        from app.observability.metrics import SHAP_CALLS_TOTAL
-        SHAP_CALLS_TOTAL.inc()
-    except Exception:
-        pass
-
     try:
         import shap
     except ImportError as exc:
@@ -181,13 +173,6 @@ def explain_prospect_pick(
             "shap.consistency_check_failed prospect=%s shap_sum=%.4f residual=%.4f error=%.4f",
             prospect.name, shap_sum, residual, shap_error,
         )
-
-    # ── Emit metrics ──────────────────────────────────────────────────────────
-    try:
-        from app.observability.metrics import SHAP_DURATION
-        SHAP_DURATION.observe(_time.perf_counter() - _t0)
-    except Exception:
-        pass
 
     return {
         "prospect_name":         prospect.name,

@@ -48,13 +48,7 @@ async def train_model(final: bool = False, db: Session = Depends(get_db)):
 
     Saves model.pkl + model_meta.json to disk, then hot-swaps the in-memory registry.
     """
-    import time as _time
     from app.ml.train import train_from_db
-    from app.observability.metrics import (
-        MODEL_TRAINING_DURATION, MODEL_VALIDATION_AUC,
-        MODEL_TRAINING_SAMPLES, MODEL_INFO,
-    )
-
     from app.config import settings
     if settings.APP_ENV == "production":
         raise HTTPException(
@@ -69,7 +63,6 @@ async def train_model(final: bool = False, db: Session = Depends(get_db)):
     if not _acquire_training_lock():
         raise HTTPException(status_code=409, detail="A training run is already in progress.")
 
-    t0 = _time.perf_counter()
     try:
         metrics = train_from_db(db, final=final)
     except ValueError as e:
@@ -79,17 +72,6 @@ async def train_model(final: bool = False, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail="Training failed due to an internal error. Check server logs.")
     finally:
         _release_training_lock()
-
-    duration = _time.perf_counter() - t0
-    MODEL_TRAINING_DURATION.observe(duration)
-    MODEL_TRAINING_SAMPLES.set(metrics.get("training_samples", 0))
-    if metrics.get("validation_auc") is not None:
-        MODEL_VALIDATION_AUC.set(metrics["validation_auc"])
-    MODEL_INFO.info({
-        "mode":           metrics.get("mode", "evaluation"),
-        "validation_auc": str(metrics.get("validation_auc", "N/A")),
-        "training_samples": str(metrics.get("training_samples", 0)),
-    })
 
     return {"status": "ok", "metrics": metrics}
 
@@ -342,11 +324,6 @@ async def explain_pick(
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         logger.exception("SHAP explanation failed")
-        try:
-            from app.observability.metrics import SHAP_ERRORS_TOTAL
-            SHAP_ERRORS_TOTAL.inc()
-        except Exception:
-            pass
         raise HTTPException(status_code=500, detail=f"Explanation error: {e}")
 
 

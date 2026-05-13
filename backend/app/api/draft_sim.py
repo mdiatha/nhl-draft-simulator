@@ -158,11 +158,6 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
     round1_order = body.lottery_result
     full_pick_order = round1_order * body.num_rounds
 
-    from app.observability.metrics import SIMULATIONS_TOTAL, SIMULATION_DURATION
-    import time as _time
-
-    _sim_start = _time.perf_counter()
-
     # ── Load everything once ──────────────────────────────────────────────────
     prospects = (
         db.query(Prospect)
@@ -297,9 +292,6 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
         picks.append(pick_data)
 
     response = {"picks": picks, "seed": seed, "temperature": body.temperature, "total_picks": len(picks)}
-
-    SIMULATION_DURATION.observe(_time.perf_counter() - _sim_start)
-    SIMULATIONS_TOTAL.labels(status="ok").inc()
 
     return response
 

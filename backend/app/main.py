@@ -1,21 +1,14 @@
-import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Depends, Request, Response
+from fastapi import FastAPI, Depends, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
-from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.observability.logging import configure_logging, request_id_middleware
-from app.observability.metrics import (
-    HTTP_REQUESTS_TOTAL,
-    HTTP_REQUEST_DURATION,
-    MODEL_INFO,
-)
 from app.api import teams
 from app.api import lottery, prospects, teams_ext
 from app.api.draft_sim import router as draft_sim_router
@@ -137,13 +130,6 @@ async def lifespan(_app: FastAPI):
 
     from app.ml.registry import registry
     registry.load()
-    if registry.is_loaded and registry.meta:
-        MODEL_INFO.info({
-            "trained_at": str(registry.meta.get("trained_at", "unknown")),
-            "validation_auc": str(registry.meta.get("validation_auc", "unknown")),
-            "mode": str(registry.meta.get("mode", "evaluation")),
-        })
-
     logger.info("app.startup", extra={"model_loaded": registry.is_loaded})
     yield
     logger.info("app.shutdown")
@@ -187,30 +173,6 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
-@app.middleware("http")
-async def prometheus_middleware(request: Request, call_next):
-    """Record per-path HTTP metrics. Skip /metrics and /health to avoid noise."""
-    path = request.url.path
-    if path in ("/metrics", "/health"):
-        return await call_next(request)
-
-    start = time.perf_counter()
-    response = await call_next(request)
-    duration = time.perf_counter() - start
-
-    HTTP_REQUESTS_TOTAL.labels(
-        method=request.method,
-        path=path,
-        status_code=response.status_code,
-    ).inc()
-    HTTP_REQUEST_DURATION.labels(
-        method=request.method,
-        path=path,
-    ).observe(duration)
-
-    return response
-
-
 # ── API versioning ────────────────────────────────────────────────────────────
 # All routes live under /api/v1/.  Each sub-router owns its own sub-path
 # (e.g. agent_router has prefix="/agent", so its routes are /api/v1/agent/...).
@@ -248,12 +210,6 @@ _v0_compat.include_router(agent_router)
 _v0_compat.include_router(standings_router)
 
 app.include_router(_v0_compat)
-
-
-@app.get("/metrics", include_in_schema=False)
-async def metrics():
-    """Prometheus scrape endpoint — returns all metrics in text exposition format."""
-    return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 def _health_snapshot(db: Session) -> tuple[dict, bool]:

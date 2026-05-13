@@ -277,21 +277,8 @@ def compute_drift_report(db) -> dict:
     }
 
 
-_STATUS_TO_INT = {"pass": 0, "warn": 1, "fail": 2}
-
-
 def _emit_drift_metrics(dimensions: dict) -> None:
-    """Publish per-dimension JS divergence and status to Prometheus."""
-    try:
-        from app.observability.metrics import DRIFT_JS_DIVERGENCE, DRIFT_STATUS
-        for dim, result in dimensions.items():
-            js  = result.get("js_divergence", 0.0)
-            st  = _STATUS_TO_INT.get(result.get("status", "pass"), 0)
-            DRIFT_JS_DIVERGENCE.labels(dimension=dim).set(js)
-            DRIFT_STATUS.labels(dimension=dim).set(st)
-        logger.info(
-            "drift.metrics_emitted dimensions=%s",
-            {d: result.get("status") for d, result in dimensions.items()},
-        )
-    except Exception as exc:
-        logger.warning("drift.metrics_emit_failed error=%s", exc)
+    logger.info(
+        "drift.checked dimensions=%s",
+        {d: result.get("status") for d, result in dimensions.items()},
+    )

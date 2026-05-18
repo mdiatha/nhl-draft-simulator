@@ -453,11 +453,6 @@ async def chat_stream(
     # Stream the final response — publish to Redis Pub/Sub for multi-instance support.
     # Any instance can subscribe to the channel and fan out tokens to its SSE client.
     # Falls back to direct yield when Redis is not configured (dev mode).
-    from app.agent.pubsub import publish_token, publish_done, new_msg_id
-
-    msg_id = new_msg_id()
-    use_pubsub = bool(settings.REDIS_URL)
-
     full_reply: list[str] = []
     try:
         async with await _create_message(
@@ -465,11 +460,7 @@ async def chat_stream(
         ) as stream:
             async for text in stream.text_stream:
                 full_reply.append(text)
-                # Direct yield (always) so the producing instance also serves the client
                 yield f"data: {json.dumps({'token': text})}\n\n"
-                # Also publish to Redis so other instances can serve reconnecting clients
-                if use_pubsub:
-                    await publish_token(settings.REDIS_URL, session_id, msg_id, text)
 
             await stream.get_final_message()
 
@@ -478,10 +469,7 @@ async def chat_stream(
         store.save_message(db, session_id, "assistant", reply)
         agent_memory.update_rolling_summary(db, session_id)
 
-        if use_pubsub:
-            await publish_done(settings.REDIS_URL, session_id, msg_id, reply)
-
-        yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'msg_id': msg_id})}\n\n"
+        yield f"data: {json.dumps({'done': True, 'session_id': session_id})}\n\n"
     except Exception as exc:
         await anthropic_breaker.record_failure()
         logger.error("scout.stream_failed", extra={"error": str(exc)})

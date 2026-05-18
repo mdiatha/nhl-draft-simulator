@@ -5,7 +5,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     DATABASE_URL: str = "postgresql+psycopg2://nhl:nhl_password@localhost:5432/nhl_draft"
-    REDIS_URL: str = "redis://localhost:6379/0"
     APP_ENV: str = "development"
     ENVIRONMENT: str = "development"   # used in structured log output
     SECRET_KEY: str = "change-me"

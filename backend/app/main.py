@@ -213,7 +213,6 @@ app.include_router(_v0_compat)
 
 
 def _health_snapshot(db: Session) -> tuple[dict, bool]:
-    import redis as redis_lib
     from app.ml.registry import registry
     from app.models import Prospect, Team
 
@@ -227,30 +226,10 @@ def _health_snapshot(db: Session) -> tuple[dict, bool]:
     except Exception:
         db_ok = False
 
-    redis_ok = False
-    _r = None
-    try:
-        _r = redis_lib.Redis.from_url(
-            settings.REDIS_URL,
-            socket_connect_timeout=1,
-            socket_timeout=1,
-        )
-        _r.ping()
-        redis_ok = True
-    except Exception:
-        pass
-    finally:
-        if _r is not None:
-            try:
-                _r.close()
-            except Exception:
-                pass
-
     ready = db_ok and registry.is_loaded
     snapshot = {
         "status": "ok" if ready else "degraded",
         "db": "connected" if db_ok else "error",
-        "redis": "connected" if redis_ok else "unavailable",
         "prospects_loaded": prospects_count,
         "teams_loaded": teams_count,
         "model_loaded": registry.is_loaded,
@@ -274,7 +253,6 @@ async def readyz(db: Session = Depends(get_db)):
     payload = {
         "status": "ready" if ready else "not_ready",
         "db": snapshot["db"],
-        "redis": snapshot["redis"],
         "model_loaded": snapshot["model_loaded"],
     }
     return JSONResponse(status_code=200 if ready else 503, content=payload)

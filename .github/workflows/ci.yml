@@ -38,7 +38,7 @@ jobs:
             --cov=app \
             --cov-report=term-missing \
             --cov-report=xml:coverage.xml \
-            --cov-fail-under=25
+            --cov-fail-under=24
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

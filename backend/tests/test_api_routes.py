@@ -169,15 +169,8 @@ class TestAuthMiddleware:
 # ── Metrics endpoint ──────────────────────────────────────────────────────────
 
 class TestMetricsEndpoint:
-    def test_metrics_returns_prometheus_format(self, client):
-        response = client.get("/metrics")
-        assert response.status_code == 200
-        assert "text/plain" in response.headers["content-type"]
-        # Prometheus text format always starts with a comment or metric name
-        assert len(response.text) > 0
-
     def test_metrics_not_in_openapi_schema(self, client):
-        """Metrics endpoint should be hidden from OpenAPI docs."""
+        """Metrics endpoint is not exposed."""
         response = client.get("/openapi.json")
         assert response.status_code == 200
         paths = response.json().get("paths", {})

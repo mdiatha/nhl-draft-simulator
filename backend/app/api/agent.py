@@ -73,7 +73,7 @@ async def enqueue_index_rebuild(db: Session = Depends(get_db)):
     """
     Enqueue an async RAG index rebuild via SQS.
 
-    Returns immediately with 202 — a Lambda/ECS worker picks up the message
+    Returns immediately with 202 — a Lambda worker picks up the message
     and calls build_index() in the background. This keeps the API responsive
     even though embedding 200+ prospects via Voyage AI takes several seconds.
 

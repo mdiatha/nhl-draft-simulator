@@ -23,17 +23,6 @@ services:
       timeout: 5s
       retries: 10
 
-  redis:
-    image: redis:7-alpine
-    restart: unless-stopped
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
@@ -61,7 +50,6 @@ services:
     environment:
       OLLAMA_BASE_URL: http://ollama:11434
       DATABASE_URL: postgresql+psycopg2://nhl:${DB_PASSWORD}@db:5432/nhl_draft
-      REDIS_URL: redis://redis:6379/0
     ports:
       - "80:8000"
     healthcheck:
@@ -72,8 +60,6 @@ services:
       start_period: 60s
     depends_on:
       db:
-        condition: service_healthy
-      redis:
         condition: service_healthy
       ollama:
         condition: service_healthy
@@ -93,5 +79,4 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
   ollama_data:

@@ -35,8 +35,8 @@ class Settings(BaseSettings):
     # CloudWatch log group. Leave empty to disable direct CloudWatch shipping.
     AWS_CLOUDWATCH_LOG_GROUP: str = ""
 
-    # ── Lambda / API Gateway ──────────────────────────────────────────────────
-    # Endpoint for admin operations delegated to Lambda via API Gateway.
+    # ── Lambda ────────────────────────────────────────────────────────────────
+    # Base URL for delegating admin operations to a Lambda (e.g. via CloudFront).
     # Leave empty to use the local FastAPI admin endpoints instead.
     LAMBDA_API_GATEWAY_URL: str = ""
 

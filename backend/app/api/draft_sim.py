@@ -142,7 +142,7 @@ async def simulate_draft(body: SimulateDraftRequest, db: Session = Depends(get_d
 
     Scores each pick using the trained XGBoost model via the in-memory registry.
     All DB queries happen once upfront — the pick loop is pure in-memory.
-    Results are cached in Redis keyed by seed + lottery order.
+    Results are computed on demand; same seed + lottery order always produces identical output.
     """
     if not registry.is_loaded:
         raise HTTPException(

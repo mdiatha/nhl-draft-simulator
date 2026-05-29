@@ -132,7 +132,7 @@ class ModelRegistry:
           - Timestamps are fragile: if the file is copied, touched, or its
             metadata changes, the timestamp changes without the model changing.
           - Two identical models trained at different times would produce
-            different cache keys, causing unnecessary Redis cache misses.
+            different cache keys if simulation results were ever cached.
           - MD5 of bytes is deterministic: the key changes if and only if the
             model weights change, which is exactly when cached simulations
             should be invalidated.

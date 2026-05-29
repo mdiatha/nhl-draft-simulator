@@ -1,7 +1,7 @@
 """Unit tests for API routes and auth middleware.
 
 These tests use TestClient (sync WSGI adapter for FastAPI) with mocked
-dependencies so no real database or Redis connection is required.
+dependencies so no real database connection is required.
 
 Note: importing app.main requires prometheus_client and other observability
 deps. These are installed in the Docker/CI environment but may not be present

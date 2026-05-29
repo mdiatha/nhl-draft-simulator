@@ -450,9 +450,7 @@ async def chat_stream(
         yield f"data: {json.dumps({'error': 'Tool execution failed. Please try again.'})}\n\n"
         return
 
-    # Stream the final response — publish to Redis Pub/Sub for multi-instance support.
-    # Any instance can subscribe to the channel and fan out tokens to its SSE client.
-    # Falls back to direct yield when Redis is not configured (dev mode).
+    # Stream the final response token-by-token via the SSE generator.
     full_reply: list[str] = []
     try:
         async with await _create_message(

@@ -140,7 +140,6 @@ export class NhlDraftStack extends cdk.Stack {
       `ANTHROPIC_MODEL=claude-haiku-4-5-20251001`,
       `OLLAMA_BASE_URL=http://ollama:11434`,
       `DATABASE_URL=postgresql+psycopg2://nhl:$(get_param /nhl-draft/db_password)@db:5432/nhl_draft`,
-      `REDIS_URL=redis://redis:6379/0`,
       `SECRET_KEY=$(get_param /nhl-draft/secret_key)`,
       `ADMIN_API_KEY=$(get_param /nhl-draft/admin_api_key)`,
       `ANTHROPIC_API_KEY=$(get_param /nhl-draft/anthropic_api_key)`,

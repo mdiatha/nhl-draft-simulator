@@ -9,7 +9,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 cd backend
 
 # Start dependencies (requires pgvector/pgvector:pg16, not postgres:16-alpine)
-docker compose up -d db redis ollama
+docker compose up -d db ollama
 
 # Pull embedding model (one-time, persists in ollama_data Docker volume)
 docker compose exec ollama ollama pull nomic-embed-text
@@ -41,7 +41,7 @@ npm run lint     # eslint, zero warnings allowed
 curl -X POST http://localhost:8000/api/ml/train -H "X-Admin-Key: your-key"
 curl -X POST http://localhost:8000/api/ml/calibrate -H "X-Admin-Key: your-key"
 curl -X POST http://localhost:8000/api/agent/index          # rebuild RAG index
-curl http://localhost:8000/health                           # DB + Redis + model status
+curl http://localhost:8000/health                           # DB + model status
 ```
 
 ## Architecture
@@ -49,10 +49,10 @@ curl http://localhost:8000/health                           # DB + Redis + model
 ### Request flow
 1. Frontend → REST/SSE → FastAPI (`backend/app/api/`)
 2. API routes call engines/ML/agent modules
-3. Results cached in Redis (draft simulations keyed by seed + lottery order, TTL 3600s)
+3. Results returned directly (draft simulations are computed on demand — no caching layer)
 
 ### ML pipeline (`backend/app/ml/`)
-- **train.py** — XGBoost LambdaMART (`rank:pairwise`). Always runs two phases: 9-fold walk-forward CV (2014→2015 … 2022→2023) to compute a reliable NDCG@1 estimate, then a final temporal split (train ≤ `TRAIN_CUTOFF_YEAR=2022`, val ≥ `VAL_START_YEAR=2023`) for early stopping + calibration. Phase 2 retrains on all data using `best_iteration` from the final split. `final` flag is kept for API compatibility but no longer changes behavior.
+- **train.py** — XGBoost LambdaMART (`rank:ndcg`, eval_metric `ndcg@1`). Always runs two phases: 9-fold walk-forward CV (2014→2015 … 2022→2023) to compute a reliable NDCG@1 estimate, then a final temporal split (train ≤ `TRAIN_CUTOFF_YEAR=2022`, val ≥ `VAL_START_YEAR=2023`) for early stopping + calibration. Phase 2 retrains on all data using `best_iteration` from the final split. `final` flag is kept for API compatibility but no longer changes behavior.
 - **features.py** — 33-feature engineering. `build_training_dataset(db)` pulls historical picks with negative sampling (`NEGATIVE_WINDOW=31` picks ahead). Feature normalization is fixed-denominator (e.g. `CSS_RANK_DENOM=450`) — must match identically in both training and inference or predictions break.
 - **predict.py** — Inference path. Scores prospects via `score_pool_for_team()`. Has a feature store cache path (pre-materialized features for each prospect); if cache column schema is stale it falls back gracefully.
 - **registry.py** — Module-level singleton `registry`. Loaded at startup, hot-swapped via `POST /api/ml/reload`. Holds XGBoost model + `calibration` (conformal prediction quantiles).
@@ -71,7 +71,7 @@ Bayesian shrinkage (K=30) + recency decay (0.85/year) over a GM's historical pic
 `require_admin_key` in `middleware/auth.py`: silent pass-through when `ADMIN_API_KEY=""` **only** when `APP_ENV=development`. In any other environment, an unset key returns 503. Key comparison uses `hmac.compare_digest`.
 
 ### Database
-PostgreSQL 16 with pgvector extension (`pgvector/pgvector:pg16` Docker image — **not** `postgres:16-alpine`). 15 Alembic migrations in `backend/alembic/versions/`. The `scout_embeddings` table uses a native `vector(768)` column with an IVFFlat cosine index (migration 015).
+PostgreSQL 16 with pgvector extension (`pgvector/pgvector:pg16` Docker image — **not** `postgres:16-alpine`). 17 Alembic migrations in `backend/alembic/versions/`. The `scout_embeddings` table uses a native `vector(768)` column with an IVFFlat cosine index (migration 015).
 
 **Migration deployment note:** `alembic/` is excluded from the Docker image (see `.dockerignore`) — migrations are never baked in. To run migrations against a live container:
 ```bash
@@ -83,7 +83,7 @@ docker compose exec api alembic upgrade head
 For CI/CD, mount the `alembic/` directory as a volume or run migrations from the host with `DATABASE_URL` pointed at the container.
 
 ### Streaming (SSE)
-Both `/api/agent/chat/stream` and `/api/draft/summary/stream` use Server-Sent Events. Tool calls execute synchronously between streaming turns in `_run_tool_rounds_silent()` — only the final text response streams token-by-token. Frontend consumes `data: {"token": "..."}` events, terminates on `data: {"done": true}`.
+Both `/api/agent/chat/stream` and `/api/draft/summary/stream` use Server-Sent Events. Tool calls execute synchronously between streaming turns in `_run_tool_rounds_silent()` — only the final text response streams token-by-token. Frontend consumes `data: {"token": "..."}` events, terminates on `data: {"done": true}`. Token delivery uses an in-process `asyncio.Queue` (one queue per stream, keyed by session+msg ID) — no Redis required for single-instance deployments.
 
 ## Known limitations
 

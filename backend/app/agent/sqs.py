@@ -8,7 +8,7 @@ Why:
   a reliability hazard.
 
 Architecture:
-  API → SQS → Lambda (or ECS task) → build_index()
+  API → SQS → Lambda → build_index()
   ↓
   Returns 202 immediately
 

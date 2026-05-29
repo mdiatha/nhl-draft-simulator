@@ -11,8 +11,8 @@ engine = create_engine(
     # pool_size=20 gives headroom for concurrent requests per worker.
     pool_size=20,
     max_overflow=10,   # hard cap: 30 total (20 + 10)
-    # Recycle connections every hour so RDS Proxy's idle timeout (~900 s)
-    # never kills a connection that SQLAlchemy thinks is still live.
+    # Recycle connections every hour to prevent idle timeout from killing
+    # connections that SQLAlchemy thinks are still live.
     pool_recycle=3600,
 )
 
@@ -20,9 +20,9 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # ── Read replica engine (read-only queries) ───────────────────────────────────
 # Routes all Scout agent tool queries (get_gm_profile, search_prospects, etc.)
-# to an RDS read replica. These are all SELECT-only — routing them to the
-# replica keeps the primary free for writes (ingestion, training checkpoints,
-# conversation persistence).
+# to a read replica if DATABASE_READ_REPLICA_URL is set. These are all
+# SELECT-only — routing them to the replica keeps the primary free for writes
+# (ingestion, training checkpoints, conversation persistence).
 #
 # Benefits:
 #   - Primary write throughput is unaffected by analytical queries

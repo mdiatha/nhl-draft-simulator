@@ -13,18 +13,18 @@ A full-stack NHL draft product that simulates the 2026 NHL Entry Draft as realis
 
 | Area | Details |
 |------|---------|
-| **ML — ranking** | XGBoost LambdaMART (`rank:ndcg`), 33 features, temporal train/val split, NDCG@1 validation |
+| **ML — ranking** | XGBoost LambdaMART (`rank:ndcg`), 48 features, temporal train/val split, NDCG@1 validation |
 | **ML — uncertainty** | Split conformal prediction (inductive CP) with empirically verified 90%/85%/80% coverage |
 | **ML — explainability** | SHAP TreeExplainer, per-pick feature attributions surfaced in the UI |
 | **ML — evaluation** | Multi-year temporal backtests vs. CSS/PPG/random baselines, MRR, top-1/3/5 accuracy |
 | **Statistical modeling** | Bayesian shrinkage (empirical Bayes) + recency decay for GM tendency profiles |
 | **AI agent** | Claude tool-use loop, 10 DB-backed tools, prompt caching, circuit breaker, RAG (pgvector + Ollama) |
-| **Streaming** | Server-Sent Events (SSE) for live draft summaries and agent chat; Redis Pub/Sub for fan-out |
-| **Backend** | FastAPI, SQLAlchemy, Alembic (15 migrations), PostgreSQL 16 + pgvector, Redis |
+| **Streaming** | Server-Sent Events (SSE) for live draft summaries and agent chat; in-process asyncio.Queue for token fan-out |
+| **Backend** | FastAPI, SQLAlchemy, Alembic (17 migrations), PostgreSQL 16 + pgvector |
 | **Frontend** | React 18, TypeScript, Tailwind CSS, Vite; 8 pages with streaming SSE consumption |
-| **Infrastructure** | AWS CDK (TypeScript): CloudFront/S3, API Gateway → ALB → ECS, RDS, S3 model registry |
-| **Observability** | Prometheus metrics, structured JSON logging, CloudWatch dashboards, Sentry |
-| **CI/CD** | GitHub Actions with OIDC auth (no long-lived keys), Alembic migration checks, 70% coverage gate |
+| **Infrastructure** | AWS CDK (TypeScript): CloudFront/S3, EC2 + Docker Compose, S3 model registry, EventBridge + Lambda ingestion |
+| **Observability** | Structured JSON logging, Sentry error tracking, OpenTelemetry support (optional) |
+| **CI/CD** | GitHub Actions with OIDC auth (no long-lived keys), Alembic migration checks, 25% coverage gate |
 
 ---
 
@@ -33,16 +33,16 @@ A full-stack NHL draft product that simulates the 2026 NHL Entry Draft as realis
 ```
 Browser
   └── CloudFront → S3 (React SPA)
-  └── API Gateway (throttle: 60 req/min)
-        └── VPC Link → Private ALB
-              └── ECS (FastAPI)
-                    ├── RDS PostgreSQL 16 + pgvector
-                    ├── Redis (cache + SSE pub/sub)
-                    ├── S3 (model artifacts, versioned)
-                    └── Anthropic API (Claude)
+  └── CloudFront /api/* → EC2 t3.small (Elastic IP, port 80)
+        └── Docker Compose
+              ├── FastAPI (port 8000)
+              ├── PostgreSQL 16 + pgvector
+              └── Ollama (nomic-embed-text embeddings)
 
-EventBridge (daily)
-  └── Lambda → API Gateway /api/admin/ingest
+Anthropic API (Claude) — called by FastAPI for Scout + draft summaries
+
+EventBridge (daily cron)
+  └── Lambda → POST /api/admin/ingest
 ```
 
 ---
@@ -102,7 +102,7 @@ cd nhl-draft-simulator
 
 # 1. Start dependencies
 cp backend/.env.example backend/.env
-docker compose up -d db redis ollama
+docker compose up -d db ollama
 
 # 2. Pull the embedding model (one-time)
 docker compose exec ollama ollama pull nomic-embed-text
@@ -150,13 +150,13 @@ nhl-draft-simulator/
 │   │   ├── ingestion/    # NHL API clients, stat ingestion, checkpointer
 │   │   ├── models/       # SQLAlchemy ORM models
 │   │   └── observability/# Prometheus metrics, structured logging, data quality
-│   ├── alembic/versions/ # 15 migrations
+│   ├── alembic/versions/ # 17 migrations
 │   └── tests/            # Unit + integration tests
 ├── frontend/
 │   └── src/pages/        # 8 React pages
 ├── infrastructure/
-│   └── cdk/              # AWS CDK stacks (TypeScript)
-│       └── lib/constructs/  # network, compute, api, frontend, storage, ingestion, observability
+│   └── cdk/              # AWS CDK (TypeScript) — single stack file
+│       └── lib/nhl-draft-stack.ts  # EC2, CloudFront, S3, IAM, SSM params, budget alert
 └── lambda/               # EventBridge-triggered ingestion Lambda
 ```
 

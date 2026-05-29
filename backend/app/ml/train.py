@@ -1,16 +1,11 @@
 """Train an XGBoost model to predict which prospect a team will draft.
 
-Architecture: Learning-to-rank (LambdaMART via XGBoost rank:pairwise).
+Architecture: Learning-to-rank (LambdaMART via XGBoost rank:ndcg).
 
 Each draft pick becomes a query group: one positive row (the actual pick) and
 N negative rows (prospects available at that slot but passed over). The ranker
-directly optimizes "the picked prospect should score above all others" — which
-is the actual decision GMs make.
-
-rank:pairwise is used over rank:ndcg because our task is pick-level prediction
-(which single player gets chosen), not full-list ranking. Pairwise loss directly
-optimizes the comparison between the positive and each negative, which exactly
-matches the training data structure (1 positive vs 31 negatives per group).
+directly optimizes NDCG@1 — whether the actual pick is ranked first — which
+matches the real GM decision structure (one player gets chosen from all available).
 
 Training data: historical picks (2008-2024, CSS era only) with recency weighting.
 

@@ -260,7 +260,7 @@ jobs:
           echo "Model uploaded: $(cat backend/app/ml/model_meta.json | python3 -c 'import sys,json; m=json.load(sys.stdin); print(f\"ndcg1={m[\\x27validation_auc\\x27]} trained_at={m[\\x27trained_at\\x27]}\")')"
 
   # - Deploy to EC2 (main branch only) -
-  # Architecture: single EC2 running Docker Compose (API + Postgres + Redis + Ollama).
+  # Architecture: single EC2 running Docker Compose (API + Postgres + Ollama).
   # Deploy = pull latest ECR image on the instance, run migrations, restart the api container.
   deploy:
     name: Deploy to EC2

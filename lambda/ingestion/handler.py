@@ -2,7 +2,7 @@
 NHL Draft Ingestion Lambda — EventBridge trigger.
 
 Invoked daily at 06:00 UTC by EventBridge.
-Posts to FastAPI /api/admin/ingest behind API Gateway, which runs the full NHL
+Posts to FastAPI /api/admin/ingest (via CloudFront), which runs the full NHL
 data ingestion pipeline where the DB connection and app state live.
 
 No dependencies beyond stdlib — packages to a tiny zip with no pip install.

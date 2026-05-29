@@ -9,7 +9,7 @@ ready for the Tankathon-style standings table.
 Lottery eligibility: bottom 16 teams by points (ties broken by ROW, then GP).
 Odds are the official NHL lottery odds table (fixed by the CBA, not points).
 
-Results are cached in Redis for 5 minutes so the frontend can poll freely.
+Results are fetched live on each request; the NHL API response is fast enough for polling.
 """
 from __future__ import annotations
 

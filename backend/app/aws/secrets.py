@@ -1,7 +1,7 @@
 """
 AWS Secrets Manager integration.
 
-Fetches application secrets (DATABASE_URL, REDIS_URL, SECRET_KEY) from
+Fetches application secrets (DATABASE_URL, SECRET_KEY) from
 Secrets Manager at startup and injects them into the process environment
 before Pydantic Settings reads them.
 
@@ -16,7 +16,6 @@ Usage:
   The secret in Secrets Manager should be a JSON object:
     {
       "DATABASE_URL": "postgresql+psycopg2://user:pass@host:5432/db",
-      "REDIS_URL": "redis://host:6379/0",
       "SECRET_KEY": "..."
     }
 

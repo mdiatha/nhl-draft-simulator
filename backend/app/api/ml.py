@@ -120,7 +120,7 @@ async def rollback_model(version: str):
 
     version: the trained_at timestamp (e.g. 2026-03-28T12:00:00+00:00).
     Copies the versioned model back to models/latest/ then hot-reloads it.
-    Flushes the Redis simulation cache so users immediately get results
+    Hot-reloads the registry so users immediately get results
     from the rolled-back model.
     """
     from app.aws.s3 import rollback_model as s3_rollback

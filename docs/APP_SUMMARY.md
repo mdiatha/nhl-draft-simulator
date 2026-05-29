@@ -38,9 +38,8 @@ It runs a weighted draft lottery, simulates all 7 rounds pick-by-pick using an M
 ```
 Browser
   └── CloudFront → S3  (React SPA, hashed asset caching)
-  └── EC2 (FastAPI behind Nginx + Docker Compose)
+  └── EC2 t3.small (FastAPI via Docker Compose)
         ├── PostgreSQL 16 + pgvector  (main data + vector embeddings)
-        ├── Redis                      (simulation cache, SSE pub/sub)
         ├── Ollama                     (local nomic-embed-text for RAG)
         └── Anthropic API              (Claude for Scout + draft analysis)
 
@@ -83,7 +82,7 @@ The backend is a single FastAPI application (~6,500 lines across APIs, ML, agent
 
 ## Backend
 
-**Stack:** FastAPI, SQLAlchemy 2, Alembic, PostgreSQL 16, pgvector, Redis, Python 3.11
+**Stack:** FastAPI, SQLAlchemy 2, Alembic, PostgreSQL 16, pgvector, Python 3.11
 
 ### API Modules
 
@@ -176,7 +175,7 @@ This is superior to binary classification (`was_picked=1/0`) because:
 
 ```
 Algorithm:     XGBoost LambdaMART (objective: rank:ndcg)
-Features:      34 engineered features
+Features:      48 engineered features
 Training data: Historical picks 2008–2024 (CSS era), ~92,000 rows
 Train split:   ≤ 2022 (eval mode), all data (production mode)
 Val split:     ≥ 2023
@@ -184,7 +183,7 @@ Early stop:    25 rounds on NDCG@1
 Hyperparams:   learning_rate=0.05, max_depth=5, subsample=0.7, colsample_bytree=0.75
 ```
 
-### Features (34 Total)
+### Features (48 Total)
 
 | Group | Features | Engineering Note |
 |-------|----------|-----------------|
@@ -368,7 +367,7 @@ The NHL Records API only has data for completed drafts (2025 and earlier). The 2
 | Component | AWS Service | Notes |
 |-----------|-------------|-------|
 | Frontend delivery | CloudFront + S3 | Hashed assets: `max-age=31536000,immutable`. index.html: `no-cache,no-store` |
-| Backend compute | EC2 (single instance) | Nginx reverse proxy + Docker Compose (API + Postgres + Redis + Ollama) |
+| Backend compute | EC2 (single instance) | Docker Compose (API + Postgres + Ollama) |
 | Static IP | Elastic IP | Stable address for DNS and API URL configuration |
 | Object storage | S3 | ML model artifacts (versioned), frontend build artifacts |
 | Scheduled ingestion | EventBridge + Lambda | Daily cron → POST /api/admin/ingest |
@@ -386,7 +385,7 @@ Previous architecture used ECS + RDS + ALB + VPC (~$80/month). Migrated to singl
 
 | Job | What It Runs |
 |-----|-------------|
-| `backend` | `ruff` lint, unit tests with 70% coverage gate, coverage XML artifact |
+| `backend` | `ruff` lint, unit tests with 25% coverage gate, coverage XML artifact |
 | `integration` | Testcontainers PostgreSQL (pgvector/pgvector:pg16), integration tests |
 | `migrations` | Clean DB, `alembic upgrade head` — catches migration regressions |
 | `cdk-synth` | CDK synth validates CloudFormation output without AWS credentials |
@@ -398,13 +397,14 @@ All jobs use OIDC for AWS authentication — no long-lived keys stored as secret
 ### CD Pipeline (main branch only, after all CI passes)
 
 1. Build and push backend Docker image to ECR (tagged with git SHA + `latest`)
-2. Run Alembic migrations as a one-shot task (waits for exit code 0)
-3. Force-deploy ECS service and wait for stability
-4. Backend smoke tests: `/livez`, `/readyz`, `/api/ml/status`
-5. Frontend: `npm run build` → S3 sync (hashed assets immutable, index.html no-cache)
-6. CloudFront cache invalidation (`/*`)
-7. Frontend smoke test: HTML response check
-8. Lambda function code update for ingestion trigger
+2. Deploy via SSM Run Command to the EC2 instance: ECR login, `docker compose pull api`, prune old images
+3. Run Alembic migrations on the instance (`docker compose run --rm api alembic upgrade head`)
+4. Restart API container (`docker compose up -d --no-deps api`)
+5. Backend smoke tests: `/livez`, `/readyz`, `/api/ml/status`
+6. Frontend: `npm run build` → S3 sync (hashed assets immutable, index.html no-cache)
+7. CloudFront cache invalidation (`/*`)
+8. Frontend smoke test: HTML response check
+9. Lambda function code update for ingestion trigger
 
 ---
 
@@ -412,13 +412,11 @@ All jobs use OIDC for AWS authentication — no long-lived keys stored as secret
 
 | Layer | Tool |
 |-------|------|
-| Application metrics | Prometheus (FastAPI middleware, per-endpoint latency/count) |
-| Agent metrics | Per-tool call count + latency, prompt cache hit/write counters |
-| Structured logging | JSON logs with `extra={}` context dict, log level config |
-| Health probes | `/livez` (process alive), `/readyz` (DB + Redis + model loaded) |
-| Infra monitoring | CloudWatch dashboards, alarms on CPU/memory/request error rate |
-| Alerting | SNS → email on CloudWatch alarm breach |
-| Error tracking | Sentry (frontend + backend) |
+| Structured logging | JSON logs with `extra={}` context dict, request-ID middleware |
+| Health probes | `/livez` (process alive), `/readyz` (DB + model loaded), `/health` (full snapshot) |
+| Error tracking | Sentry (frontend + backend, optional — enabled via `SENTRY_DSN`) |
+| Distributed tracing | OpenTelemetry (optional — enabled via `OTEL_EXPORTER_OTLP_ENDPOINT`) |
+| Cost monitoring | AWS Budgets — SNS email alert at configured monthly threshold |
 
 ---
 
@@ -435,7 +433,7 @@ backend/tests/
   integration/              — Testcontainers Postgres: full migration path, real queries
 ```
 
-Coverage gate: 70% minimum enforced in CI. Integration tests use `pgvector/pgvector:pg16` (not `postgres:16-alpine`) because migration 011 requires the pgvector extension.
+Coverage gate: 25% minimum enforced in CI. Integration tests use `pgvector/pgvector:pg16` (not `postgres:16-alpine`) because migration 011 requires the pgvector extension.
 
 ---
 
@@ -492,7 +490,7 @@ Coverage gate: 70% minimum enforced in CI. Integration tests use `pgvector/pgvec
 
 **ML / Modeling**
 - Built an XGBoost LambdaMART learning-to-rank model to predict NHL draft picks, framing each draft slot as a query group with 1 positive (actual pick) and ~30 negatives (passed-over prospects) — directly optimizing NDCG@1 on held-out temporal splits
-- Engineered 34 features across 10 groups including league-normalized PPG, pick-slot-relative rank, dynamic board-state features (position saturation, positional quality rank), and GM-specific tendency weights
+- Engineered 48 features across 10 groups including league-normalized PPG, pick-slot-relative rank, dynamic board-state features (position saturation, positional quality rank), GM-specific tendency scalars, and GM × prospect affinity interaction terms
 - Implemented split conformal prediction at three coverage levels (90%/85%/80%) to produce statistically valid prediction sets for each pick; empirically verified coverage in automated tests
 - Added SHAP TreeExplainer with per-pick feature attributions surfaced inline in the React UI, providing pick-level explainability without leaving the draft board
 - Designed GM tendency profiles using Bayesian shrinkage (K=30 empirical Bayes, pulls new GMs toward population prior) and exponential recency decay (λ=0.85/year), making tendency estimates stable for GMs with few picks while capturing strong preferences for established ones
@@ -506,8 +504,8 @@ Coverage gate: 70% minimum enforced in CI. Integration tests use `pgvector/pgvec
 - Refactored the prospect data model (migration 017) from a flat single-class table to a normalized schema (`players`, `draft_classes`, `prospects`, `prospect_rankings`, `player_season_stats`) enabling point-in-time draft modeling and multi-year player tracking
 
 **Infrastructure / DevOps**
-- Deployed the full stack on AWS using CDK in TypeScript: CloudFront/S3 frontend, single EC2 with Nginx + Docker Compose backend (migrated from ECS+RDS to cut monthly cost from ~$80 to ~$20), EventBridge + Lambda daily ingestion trigger
-- Built a GitHub Actions CI/CD pipeline with OIDC authentication (no long-lived AWS keys): linting, unit tests (70% coverage gate), integration tests via Testcontainers, Alembic migration regression checks, Docker build validation, ECR push, and CloudFront cache invalidation
+- Deployed the full stack on AWS using CDK in TypeScript: CloudFront/S3 frontend, single EC2 t3.small with Docker Compose backend (migrated from ECS+RDS to cut monthly cost from ~$80 to ~$20), EventBridge + Lambda daily ingestion trigger, GitHub Actions CD via SSM Run Command
+- Built a GitHub Actions CI/CD pipeline with OIDC authentication (no long-lived AWS keys): linting, unit tests (25% coverage gate), integration tests via Testcontainers, Alembic migration regression checks, Docker build validation, ECR push, SSM Run Command EC2 deployment, backend smoke tests, frontend S3 sync, and CloudFront cache invalidation
 - Managed 17 Alembic migrations including native pgvector column type migration with IVFFlat cosine index and a zero-downtime schema normalization separating player identity from draft-class context
 
 **Frontend**

@@ -6,16 +6,18 @@ The deployment pipeline is defined in [ci.yml](/Users/mihirdiatha/Desktop/Projec
 
 Backend deploy flow:
 
-1. Build and push backend image to ECR
-2. Run Alembic migrations as an ECS task
-3. Force a new ECS deployment
-4. Run smoke tests against `/livez`, `/readyz`, and `/api/ml/status`
+1. Build and push backend image to ECR (tagged with `github.sha` + `latest`)
+2. Deploy via SSM Run Command to the EC2 instance
+3. On the instance: ECR login, `docker compose pull api`, prune old images
+4. Run Alembic migrations (`docker compose run --rm api alembic upgrade head`)
+5. Restart API container (`docker compose up -d --no-deps api`)
+6. Run smoke tests against `/livez`, `/readyz`, and `/api/ml/status`
 
 Frontend deploy flow:
 
-1. Build the React app
-2. Upload static assets to the frontend S3 bucket
-3. Invalidate CloudFront
+1. Build the React app (`npm run build`)
+2. Upload static assets to the frontend S3 bucket (hashed assets: immutable cache, `index.html`: no-cache)
+3. Invalidate CloudFront (`/*`)
 4. Optionally run a smoke test against `FRONTEND_URL`
 
 Lambda deploy flow:
@@ -29,29 +31,32 @@ Lambda deploy flow:
 
 Endpoints:
 
-- `/livez`: process liveness
-- `/readyz`: dependency readiness
-- `/health`: detailed dependency health payload
-- `/metrics`: Prometheus metrics endpoint
+- `/livez`: process liveness — always 200 if the process is running
+- `/readyz`: dependency readiness — 503 until DB is connected and model is loaded
+- `/health`: detailed dependency health payload (DB status, model loaded, prospect/team counts)
 
 ## Logs and Monitoring
 
-Terraform monitoring resources:
+Application logs are written as structured JSON via `app/observability/logging.py`. Each log line includes a `request_id` field for tracing a request across log entries.
 
-- [cloudwatch.tf](/Users/mihirdiatha/Desktop/Projects/NHL draft project/nhl-draft-simulator/infrastructure/terraform/cloudwatch.tf)
+To view live logs on the instance:
 
-Important signals:
+```bash
+# Via SSM Session Manager (no SSH key needed)
+aws ssm start-session --target <EC2_INSTANCE_ID>
 
-- ECS CPU / memory alarms
-- API Gateway 5xx / latency alarms
-- ALB unhealthy host count
-- RDS CPU
-- ingestion Lambda errors / missed schedule
-- AWS budget threshold alert
+# Then on the instance:
+docker compose logs -f api
+docker compose logs -f db
+```
 
-Application metrics:
+Important signals to watch:
 
-- [metrics.py](/Users/mihirdiatha/Desktop/Projects/NHL draft project/nhl-draft-simulator/backend/app/observability/metrics.py)
+- EC2 CPU and memory (CloudWatch EC2 metrics)
+- Docker Compose service health (`docker compose ps`)
+- EventBridge ingestion rule execution history
+- Lambda invocation errors / missed schedule
+- AWS Budget threshold alert (SNS email at configured threshold)
 
 ## Common Issues
 
@@ -62,7 +67,7 @@ Check:
 - `/readyz`
 - model load status from `/api/ml/status`
 - database connectivity
-- recent ECS task logs in CloudWatch
+- recent container logs: `docker compose logs api --tail=100`
 
 ### Frontend shows stale assets
 
@@ -76,29 +81,29 @@ Check:
 
 Check:
 
-- EventBridge rule
-- Lambda invocation history
-- Lambda DLQ
-- CloudWatch alarm for ingestion SLA
+- EventBridge rule enabled/disabled status
+- Lambda invocation history in CloudWatch Logs
+- Lambda DLQ (if configured)
 
 ### Scout or summary streaming fails
 
 Check:
 
-- Anthropic API configuration
-- backend logs from the streaming endpoints
-- Redis availability if using pub/sub fan-out
+- Anthropic API key is set (`ANTHROPIC_API_KEY` in `.env`)
+- Ollama is running: `docker compose ps ollama`
+- Backend logs from the streaming endpoints
 
 ## Rollback
 
 Model rollback:
 
-- use the model rollback API backed by S3 artifact versions
+- Use `POST /api/ml/rollback?version=<trained_at>` to copy a prior S3 artifact back to `models/latest/` and hot-reload the registry
 
 Application rollback:
 
-- redeploy a prior ECR image tag through the ECS service
+- Set `IMAGE_TAG` in `/home/ec2-user/.env` to a prior ECR image SHA, then `docker compose up -d --no-deps api`
+- Or push a prior git tag to trigger a full CI/CD redeploy
 
 Infrastructure rollback:
 
-- use Terraform plan/apply against the prior known-good configuration
+- Run `npx cdk deploy` against a prior commit of `infrastructure/cdk/lib/nhl-draft-stack.ts`
